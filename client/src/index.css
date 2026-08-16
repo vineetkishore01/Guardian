@@ -78,59 +78,72 @@
     --viz-axis: 220 9% 46%;
   }
 
+  /*
+   * AMOLED dark theme.
+   *
+   * The page plane is true #000, where an OLED panel switches the pixel off
+   * entirely — that is where the power saving and the deep contrast come from,
+   * so the largest area on screen is kept literally black. Elevation is then
+   * built from near-black surfaces (4%/6%) rather than the usual dark grey.
+   *
+   * On black, drop shadows are invisible: there is nothing darker to cast onto.
+   * Borders therefore carry all the separation, so they run brighter here than
+   * a conventional dark theme would need.
+   */
   .dark {
-    --background: 224 24% 7%;
-    --foreground: 220 14% 96%;
+    --background: 0 0% 0%;
+    --foreground: 0 0% 96%;
 
-    --card: 224 20% 10%;
-    --card-foreground: 220 14% 96%;
+    --card: 0 0% 4%;
+    --card-foreground: 0 0% 96%;
 
-    --popover: 224 22% 11%;
-    --popover-foreground: 220 14% 96%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 96%;
 
-    --primary: 220 14% 96%;
-    --primary-foreground: 224 24% 9%;
+    --primary: 0 0% 96%;
+    --primary-foreground: 0 0% 4%;
 
-    --secondary: 223 17% 16%;
-    --secondary-foreground: 220 14% 96%;
+    --secondary: 0 0% 11%;
+    --secondary-foreground: 0 0% 96%;
 
-    --muted: 223 17% 15%;
-    --muted-foreground: 220 10% 62%;
+    --muted: 0 0% 9%;
+    --muted-foreground: 0 0% 63%;
 
-    --accent: 223 17% 18%;
-    --accent-foreground: 220 14% 96%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
 
     --destructive: 0 62% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 223 15% 19%;
-    --input: 223 15% 22%;
+    /* Brighter than a grey-dark theme: on black these are the only thing
+       separating one surface from the next. */
+    --border: 0 0% 17%;
+    --input: 0 0% 22%;
     --ring: 217 91% 62%;
 
     --brand: 217 91% 62%;
-    --brand-foreground: 224 24% 9%;
-    --brand-soft: 222 47% 17%;
+    --brand-foreground: 0 0% 4%;
+    --brand-soft: 217 60% 13%;
 
     --ok: 158 64% 48%;
-    --ok-soft: 158 40% 14%;
+    --ok-soft: 158 45% 10%;
     --warn: 38 92% 58%;
-    --warn-soft: 32 45% 14%;
+    --warn-soft: 36 55% 10%;
     --crit: 351 83% 63%;
-    --crit-soft: 350 45% 15%;
+    --crit-soft: 351 55% 11%;
 
-    --surface-highlight: 220 20% 100%;
-    --surface-shadow: 224 60% 2%;
+    --surface-highlight: 0 0% 100%;
+    --surface-shadow: 0 0% 0%;
 
-    /* Selected for the dark card surface (#14171f), not an automatic flip of
-       the light steps: same four hues, re-stepped into the dark lightness band
-       and re-validated as a set. */
+    /* Same four hues as light, re-stepped into the dark lightness band and
+       re-validated as a set against the AMOLED card surface (#0a0a0a). */
     --viz-1: #4a90e8;
     --viz-2: #c9752f;
     --viz-3: #8570e0;
     --viz-4: #14a077;
 
-    --viz-grid: 223 15% 18%;
-    --viz-axis: 220 10% 62%;
+    --viz-grid: 0 0% 15%;
+    --viz-axis: 0 0% 60%;
   }
 }
 
@@ -168,6 +181,13 @@
       hsl(var(--brand) / 0.05) 0%,
       transparent 60%
     );
+  }
+
+  /* Removed entirely in the AMOLED theme: the whole point of a true-black
+     plane is that those pixels are switched off, and a wash would light up the
+     largest region on screen to save nothing. */
+  .dark body::before {
+    display: none;
   }
 
   #root {
@@ -227,12 +247,14 @@
     pointer-events: none;
   }
 
+  /* The lit top edge does more work on black than it does on grey — it is what
+     keeps a near-black card from dissolving into the plane behind it. */
   .dark .surface::after,
   .dark .glass-card::after {
     background: linear-gradient(
       90deg,
       transparent,
-      hsl(var(--surface-highlight) / 0.09),
+      hsl(var(--surface-highlight) / 0.14),
       transparent
     );
   }
@@ -249,11 +271,19 @@
     transform: translateY(-2px);
   }
 
+  /*
+   * On black there is nothing darker to cast a shadow onto, so elevation is
+   * expressed by lifting the surface and its border instead of by shadow.
+   */
+  .dark .surface,
+  .dark .glass-card {
+    box-shadow: none;
+  }
+
   .dark .surface-interactive:hover {
-    border-color: hsl(var(--brand) / 0.45);
-    box-shadow:
-      0 2px 6px -2px hsl(var(--surface-shadow) / 0.5),
-      0 12px 28px -10px hsl(var(--surface-shadow) / 0.65);
+    border-color: hsl(var(--brand) / 0.55);
+    background-color: hsl(0 0% 6%);
+    box-shadow: none;
   }
 
   .surface-interactive:active {
