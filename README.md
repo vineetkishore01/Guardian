@@ -1,51 +1,52 @@
 # 🛡️ Guardian — Ultra-Lightweight Server Dashboard & App Launcher
 
-> A unified, high-performance, self-hosted server telemetry dashboard and CasaOS-style application launcher designed for Debian 13 homelabs. Tailored for tight resource constraints (< 45MB RAM footprint).
+> A self-hosted server telemetry dashboard and app launcher for Docker homelabs. Reads the host directly from `/proc`, `/sys` and the Docker socket, and runs in ~35–45 MB of RAM.
 
 ---
 
 ## ✨ Key Features
 
-- **🏠 CasaOS-Style App Launcher (The Centerpiece)**:
-  - Automatically discovers all existing (16+) and future Docker containers via `/var/run/docker.sock`.
-  - **One-Click Launch**: Clicking any app tile opens `http://<server_ip>:<port>` in a new tab.
-  - **Intelligent Host Resolution**: Automatically switches base URLs between **LAN (`192.168.0.26`)**, **Tailscale (`100.94.238.9`)**, or current browser hostname.
-  - **Custom Icons**: Paste any direct image/SVG link, or pick from **60+ built-in homelab presets** (Jellyfin, Sonarr, Radarr, Seerr, qBittorrent, Home Assistant, VS Code, etc.).
-  - **Custom URLs**: Override with custom subdomains or paths (supports `{host}`, `{lan}`, `{tailscale}` placeholders).
-  - **Category Tabs & Search**: Filter by *Media, Downloads, Automation, AI & Tools, Productivity, System, Pinned*.
-  - **Custom External Bookmarks**: Add non-Docker web shortcuts (CasaOS host portal on port 3000, router admin, Proxmox, etc.).
-  - **Persistence**: All custom icons and URLs are saved in `/data/guardian.json` and persist across container updates.
+- **🏠 App launcher**
+  - Auto-discovers every container via `/var/run/docker.sock` — no manual registration.
+  - **One-click launch**: a tile opens `http://<host>:<port>` in a new tab.
+  - **Host resolution**: build launch URLs from the browser's own address, a configured LAN IP, a Tailscale IP, or a custom domain.
+  - **Custom icons**: 60+ built-in homelab presets, or any direct image/SVG URL.
+  - **Custom URLs**: override per app, with `{host}`, `{lan}` and `{tailscale}` placeholders.
+  - **Categories, search and pinning**, plus `/` to jump straight to the search box.
+  - **Bookmarks** for anything outside Docker — a router page, a NAS UI, a hosted service.
+  - **Persistence**: customisations live in `/data/guardian.json` and survive image updates.
 
-- **📊 Live System Telemetry**:
-  - **CPU & Load**: Utilization %, 8-thread breakdown, 1m/5m/15m load averages, and real-time SVG sparklines.
-  - **RAM & Swap**: Detailed breakdown (3.7 GiB total, used, available, buffers/cache, and 3.0 GiB swap usage).
-  - **Thermals**: Real-time readings from `/sys/class/thermal` (`x86_pkg_temp` ~47°C, `pch_cannonlake` ~46°C, `B0D4` ~48°C).
-  - **Network I/O**: Real-time throughput (rx/tx KB/s and MB/s) on `eno1` and `tailscale0`.
+- **📊 Live telemetry**
+  - **CPU**: total and per-core utilisation from `/proc/stat`, plus 1/5/15m load averages.
+  - **Memory**: used, available, buffers/cache and swap from `/proc/meminfo`.
+  - **Thermals**: every zone exposed under `/sys/class/thermal`.
+  - **Network**: per-interface throughput from `/proc/net/dev`, with the busiest physical link promoted.
+  - Rolling sparklines backed by an in-memory ring buffer, sampled on a fixed cadence.
 
-- **💽 Critical Storage Gauges**:
-  - **`/mnt/nas` Pool Alert**: Prominent glowing visual gauge for the critical **94% used (190 GB free)** NAS pool (including `/export/RamSetu`).
-  - **System Root (`/`)**: 18% used (183 GB free) covering Docker layers and system configs.
+- **💽 Storage**
+  - Every real filesystem from `/proc/mounts` (pseudo-filesystems filtered out), with true device and fs type.
+  - Thresholded status: healthy below 80% used, *filling up* at 80%, *low space* at 90%.
 
-- **🧹 Docker Reclaimable Storage Advisor**:
-  - Automatically analyzes `docker system df` and highlights the **16.4 GB of reclaimable image/volume space**.
-  - Includes a safe 1-click **"Prune Unused Images"** action with instant space reclamation feedback.
+- **🧹 Docker reclaimable storage**
+  - Reads `docker system df` and surfaces reclaimable image and volume space.
+  - One-click prune of **dangling images only** — running containers and tagged images are untouched.
 
-- **🩺 Non-Intrusive HTTP Health Prober**:
-  - Probes unhealthchecked web endpoints (CasaOS on 3000, ZenNotes on 8001, Pelagica on 8002, Cleanuparr on 11011, Trawl on 8191, llm-wiki on 8080, Prowlarr on 9696, Bazarr on 6767, code-server on 8443) on a gentle **60-second cycle** (3-second timeout).
-  - Distinguishes between `200 OK`, `401 Auth`, `403 Forbidden`, `302 Redirect`, and unreachable services.
+- **🩺 HTTP health prober**
+  - Probes configured endpoints on a 60-second cycle with a 3-second timeout.
+  - Reports latency and distinguishes `2xx`, redirects, `401`/`403`, other client errors and server errors.
 
-- **⚡ Ultra-Low Resource Footprint**:
-  - **Memory**: Runs comfortably in **~35–45 MB RAM** (capped at 128 MB limit).
-  - **CPU**: Negligible (< 0.3% CPU usage).
-  - **Live Push**: Uses Server-Sent Events (SSE) instead of aggressive polling.
+- **⚡ Low footprint**
+  - **Memory**: ~35–45 MB (capped at 128 MB in the sample compose).
+  - **CPU**: negligible between samples.
+  - **Live push**: Server-Sent Events with heartbeats, not aggressive polling.
+
+> **Running off-host?** Without `/proc`, `/sys` or the Docker socket, Guardian serves clearly-labelled sample data and tells you which source it could not reach. It never presents synthesized values as real measurements.
 
 ---
 
 ## 🚀 Quick Start & Deployment
 
-### Option A: Add to `/opt/media_stack/docker-compose.yml`
-
-Simply append the Guardian service block to your existing compose file:
+### Option A: add to an existing `docker-compose.yml`
 
 ```yaml
 services:
@@ -59,23 +60,28 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      # Docker socket for container auto-discovery & stats
+      # Container auto-discovery & stats
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Host telemetry
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-      # Storage monitoring
+      - /etc/os-release:/host/etc/os-release:ro
+      # Storage monitoring — mount whatever you want measured
       - /:/host/root:ro
       - /mnt/nas:/host/mnt/nas:ro
-      # Persistent icons and URLs config
+      # Persisted icons, categories and bookmarks
       - guardian_data:/data
     environment:
       - HOST_PROC=/host/proc
       - HOST_SYS=/host/sys
+      - HOST_ETC=/host/etc
       - HOST_ROOT=/host/root
       - HOST_NAS=/host/mnt/nas
-      - SERVER_IP=192.168.0.26
-      - TAILSCALE_IP=100.94.238.9
+      # Optional: extra mount points to watch, comma separated
+      # - HOST_MOUNTS=/host/mnt/backup,/host/srv
+      # Optional: pre-seed the launch targets offered in the UI
+      - SERVER_IP=192.168.1.10
+      - TAILSCALE_IP=100.100.100.100
       - PORT=3001
     deploy:
       resources:
@@ -88,37 +94,73 @@ volumes:
 ```
 
 Deploy with:
+
 ```bash
 docker compose up -d --build guardian
 ```
 
----
+### Option B: standalone
 
-### Option B: Standalone Docker Compose
-
-In this directory:
 ```bash
 docker compose up -d --build
 ```
 
-Access the dashboard:
-- **LAN**: [http://192.168.0.26:3001](http://192.168.0.26:3001)
-- **Tailscale**: [http://100.94.238.9:3001](http://100.94.238.9:3001)
+Then open `http://<your-server-ip>:3001`.
+
+---
+
+## ⚙️ Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `3001` | HTTP listen port |
+| `BIND_HOST` | `0.0.0.0` | Listen address |
+| `HOST_PROC` | `/proc` | procfs mount point |
+| `HOST_SYS` | `/sys` | sysfs mount point |
+| `HOST_ETC` | `/etc` | Used to read `os-release` for the distro name |
+| `HOST_ROOT` | `/` | Root filesystem to measure |
+| `HOST_NAS` | `/mnt/nas` | Additional volume to measure |
+| `HOST_MOUNTS` | — | Comma-separated extra mount points |
+| `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker daemon socket |
+| `DATA_DIR` | `/data` | Where `guardian.json` is written |
+| `SERVER_IP` | — | Seeds the LAN launch target |
+| `TAILSCALE_IP` | — | Seeds the Tailscale launch target |
+
+Launch targets, dashboard title and the telemetry sample interval (5–300s) are all editable in **Settings** at runtime.
+
+---
+
+## 🔌 API
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Liveness, SSE client count, last sample time |
+| `GET` | `/api/status` | Current telemetry snapshot |
+| `GET` | `/api/live` | SSE stream of snapshots |
+| `GET` | `/api/config` | Full persisted config (backup) |
+| `POST` | `/api/config/settings` | Update settings |
+| `POST` | `/api/containers/:name/custom` | Per-container overrides |
+| `POST` | `/api/custom-apps` | Create or update a bookmark |
+| `DELETE` | `/api/custom-apps/:id` | Delete a bookmark |
+| `POST` | `/api/docker/prune` | Prune dangling images |
+| `POST` | `/api/probes/refresh` | Force a health-probe cycle |
 
 ---
 
 ## 🛠️ Local Development
 
-To run locally outside Docker:
-
 ```bash
-# Install root, client, and server dependencies
-npm run build
+# Install dependencies in root, client and server
+npm install && (cd client && npm install) && (cd server && npm install)
 
-# Start server
-npm run start
+# Run client (5173) and server (3001) together with hot reload
+npm run dev
+
+# Or build and serve the production bundle from the server
+npm run build && npm run start
 ```
-Open [http://localhost:3001](http://localhost:3001).
+
+Open [http://localhost:3001](http://localhost:3001). On a non-Linux machine the host and Docker collectors fall back to sample data, and the dashboard says so.
 
 ---
 
@@ -126,31 +168,37 @@ Open [http://localhost:3001](http://localhost:3001).
 
 ```
 Guardian/
-├── Dockerfile                    # Multi-stage ultra-light production image
-├── docker-compose.yml            # Debian 13 host compose configuration
+├── Dockerfile                    # Multi-stage production image
+├── docker-compose.yml            # Sample host compose configuration
 ├── package.json                  # Root monorepo workspace scripts
-├── server/                       # Backend (Node/TypeScript/Express/SSE)
+├── server/                       # Backend (Node / TypeScript / Express / SSE)
 │   ├── src/
 │   │   ├── collectors/
-│   │   │   ├── host.ts           # /proc & /sys parser (CPU, RAM, Temps, Net)
-│   │   │   ├── disk.ts           # Storage pool monitor (/ & /mnt/nas)
-│   │   │   └── docker.ts         # Unix socket client for Docker daemon
-│   │   ├── prober.ts             # 60s HTTP health & latency prober
-│   │   ├── store.ts              # /data/guardian.json persistent store
+│   │   │   ├── host.ts           # /proc & /sys parser (CPU, RAM, temps, net)
+│   │   │   ├── disk.ts           # Filesystem discovery via /proc/mounts
+│   │   │   └── docker.ts         # Unix-socket client for the Docker daemon
+│   │   ├── prober.ts             # HTTP health & latency prober
+│   │   ├── store.ts              # Persistent store + payload sanitisation
 │   │   ├── ringbuffer.ts         # In-memory telemetry time series
 │   │   ├── types.ts              # Shared TypeScript definitions
-│   │   └── index.ts              # Server entry, SSE broadcaster, API routes
-├── client/                       # Frontend (React 18, Vite, Tailwind CSS, Lucide)
+│   │   └── index.ts              # Sampling loop, SSE broadcaster, API routes
+├── client/                       # Frontend (React 18, Vite, Tailwind, Lucide)
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── ui/               # Card, Button, Dialog, Input, Badge, Progress, Tabs
 │   │   │   ├── layout/           # Header, PruneAdvisorBanner, SettingsModal
-│   │   │   ├── metrics/          # HostStatsBar, StorageGauges
+│   │   │   ├── metrics/          # MetricCard, HostStatsBar, StorageGauges
 │   │   │   ├── apps/             # AppGrid, AppCard, EditAppModal, AddAppModal
 │   │   │   ├── services/         # ServicesTable
 │   │   │   └── charts/           # LiveSparkline
-│   │   ├── hooks/                # useLiveTelemetry (SSE + optimistic state)
-│   │   ├── lib/                  # iconPresets (60+ icons), formatters, utils
-│   │   ├── App.tsx               # Main dashboard UI
-│   │   └── index.css             # Glassmorphism & custom dark theme
+│   │   ├── hooks/                # useLiveTelemetry (SSE + fallback polling)
+│   │   ├── lib/                  # iconPresets, formatters, severity helpers
+│   │   ├── App.tsx               # Dashboard composition
+│   │   └── index.css             # Design tokens, surfaces, themes
 ```
+
+---
+
+## 🎨 Design
+
+Guardian uses a token-driven design system: a neutral ramp carries the interface, a single brand hue marks interactive affordances, and three status hues (ok / warn / critical) are reserved for state. A metric is only coloured when it crosses a threshold — a healthy dashboard reads as calm monochrome, so anything coloured is worth looking at. Light and dark themes are both first-class and applied before first paint.

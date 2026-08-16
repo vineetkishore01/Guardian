@@ -12,6 +12,18 @@ function isDockerSocketAvailable(): boolean {
   }
 }
 
+/**
+ * Whether the numbers in this module came from a real daemon.
+ *
+ * When the socket is missing the collectors fall back to a sample container
+ * list so the UI is developable off-host. That fallback is useful, but the
+ * dashboard has to say so -- previously a demo machine rendered sixteen fake
+ * containers indistinguishable from real ones.
+ */
+export function isDockerLive(): boolean {
+  return isDockerSocketAvailable();
+}
+
 function dockerApiRequest<T>(path: string, method: string = 'GET', postData?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!isDockerSocketAvailable()) {

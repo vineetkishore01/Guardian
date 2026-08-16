@@ -158,6 +158,16 @@ export interface UserConfigStore {
   customApps: CustomAppBookmark[];
 }
 
+/**
+ * Where each slice of the payload actually came from. `synthetic` means the
+ * collector could not reach the real source and returned sample data, which the
+ * UI must label rather than present as a measurement.
+ */
+export interface DataSources {
+  host: 'live' | 'synthetic';
+  docker: 'live' | 'synthetic';
+}
+
 export interface FullDashboardState {
   host: HostTelemetry;
   containers: ContainerItem[];
@@ -165,4 +175,5 @@ export interface FullDashboardState {
   probes: ServiceProbeResult[];
   config: UserConfigStore;
   history: HistoryPoint[];
+  sources: DataSources;
 }

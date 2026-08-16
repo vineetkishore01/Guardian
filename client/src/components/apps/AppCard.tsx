@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
-import {
-  ExternalLink,
-  Settings,
-  Pin,
-  CheckCircle2,
-} from 'lucide-react';
-import { Badge } from '../ui/Badge';
+import { ArrowUpRight, Settings2, Pin, Trash2 } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
-import { resolveContainerUrl, resolveBookmarkUrl, formatBytes } from '../../lib/utils';
+import { resolveContainerUrl, resolveBookmarkUrl, formatBytes, cn } from '../../lib/utils';
 
 interface AppCardProps {
   item: ContainerItem | CustomAppBookmark;
@@ -17,185 +11,185 @@ interface AppCardProps {
   onDeleteBookmark?: (id: string) => void;
 }
 
+const HEALTH_PRESENTATION: Record<string, { dot: string; label: string }> = {
+  healthy: { dot: 'bg-ok', label: 'Healthy' },
+  unhealthy: { dot: 'bg-crit', label: 'Unhealthy' },
+  starting: { dot: 'bg-warn', label: 'Starting' },
+};
+
+const STATE_PRESENTATION: Record<string, { dot: string; label: string }> = {
+  running: { dot: 'bg-ok', label: 'Running' },
+  restarting: { dot: 'bg-warn', label: 'Restarting' },
+  paused: { dot: 'bg-warn', label: 'Paused' },
+  exited: { dot: 'bg-muted-foreground', label: 'Stopped' },
+  dead: { dot: 'bg-crit', label: 'Dead' },
+  created: { dot: 'bg-muted-foreground', label: 'Created' },
+};
+
 export function AppCard({
   item,
   isCustomBookmark = false,
   settings,
   onEdit,
+  onDeleteBookmark,
 }: AppCardProps) {
   const [imgError, setImgError] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const container = !isCustomBookmark ? (item as ContainerItem) : null;
   const bookmark = isCustomBookmark ? (item as CustomAppBookmark) : null;
 
-  const targetUrl = isCustomBookmark && bookmark
+  const targetUrl = bookmark
     ? resolveBookmarkUrl(bookmark, settings)
     : container
     ? resolveContainerUrl(container, settings)
     : null;
 
-  const hasValidUrl = targetUrl && targetUrl !== '#' && !targetUrl.endsWith('/#');
-
+  const hasValidUrl = Boolean(targetUrl && targetUrl !== '#' && !targetUrl.endsWith('/#'));
   const name = container?.displayName || item.name;
-  const iconUrl = item.iconUrl;
   const category = item.category || 'General';
-  const isPinned = item.pinned;
 
-  const health = container?.health || 'none';
-  const state = container?.state || 'running';
+  // Containers report health when they define a healthcheck; otherwise the
+  // lifecycle state is the honest signal. Never claim "healthy" without one.
+  const status = container
+    ? HEALTH_PRESENTATION[container.health] ??
+      STATE_PRESENTATION[container.state] ?? { dot: 'bg-muted-foreground', label: container.status }
+    : null;
 
-  const cpu = container?.cpuPercent;
-  const mem = container?.memoryBytes;
+  const portLabel = container?.ports?.length
+    ? container.ports
+        .map((p) => p.publicPort || p.privatePort)
+        .filter((p, i, arr) => arr.indexOf(p) === i)
+        .slice(0, 3)
+        .join(', ')
+    : null;
 
-  const handleLaunch = () => {
-    if (hasValidUrl) {
+  const launch = () => {
+    if (hasValidUrl && targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer');
     } else {
       onEdit(item);
     }
   };
 
-  const getCategoryBadgeVariant = (cat: string) => {
-    const c = cat.toLowerCase();
-    if (c.includes('media')) return 'pastel-sky';
-    if (c.includes('download')) return 'pastel-lavender';
-    if (c.includes('auto')) return 'pastel-mint';
-    if (c.includes('ai') || c.includes('tool')) return 'pastel-amber';
-    if (c.includes('sys')) return 'pastel-peach';
-    return 'secondary';
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      launch();
+    }
   };
 
   return (
     <div
-      onClick={handleLaunch}
-      className={`glass-card relative flex flex-col justify-between rounded-xl p-4 sm:p-5 cursor-pointer group transition-all duration-200 border border-border select-none ${
-        isPinned ? 'ring-1 ring-sky-500/30' : ''
-      }`}
+      role="button"
+      tabIndex={0}
+      onClick={launch}
+      onKeyDown={handleKeyDown}
+      aria-label={hasValidUrl ? `Open ${name}` : `Configure ${name}`}
+      className={cn(
+        'surface surface-interactive group flex select-none flex-col p-3.5',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        item.pinned && 'border-brand/30'
+      )}
     >
-      {/* Top Bar: Category, Pin, Edit Action */}
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          <Badge variant={getCategoryBadgeVariant(category) as any} className="text-[10px] uppercase tracking-wider font-semibold truncate">
-            {category}
-          </Badge>
-          {isPinned && (
-            <span title="Pinned to top">
-              <Pin className="h-3 w-3 text-sky-500 fill-sky-500/20" />
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-          {/* Edit Button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(item);
-            }}
-            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-            title="Edit icon and launch URL"
-          >
-            <Settings className="h-3.5 w-3.5" />
-          </button>
-
-          {/* Direct Launch Icon */}
-          {hasValidUrl && (
-            <div className="p-1.5 rounded-md text-muted-foreground group-hover:text-sky-600 dark:group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
-              <ExternalLink className="h-3.5 w-3.5" />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Center: App Icon & Name */}
-      <div className="flex items-center gap-3.5 my-1">
-        <div className="relative flex-shrink-0 flex items-center justify-center h-11 w-11 rounded-xl bg-secondary/80 border border-border p-2 shadow-inner group-hover:scale-105 transition-transform">
-          {iconUrl && !imgError ? (
+      <div className="flex items-start gap-3">
+        <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted p-1.5">
+          {item.iconUrl && !imgError ? (
             <img
-              src={iconUrl}
-              alt={name}
+              src={item.iconUrl}
+              alt=""
               onError={() => setImgError(true)}
-              className="h-full w-full object-contain filter drop-shadow-sm"
+              className="h-full w-full object-contain"
               loading="lazy"
             />
           ) : (
-            <span className="text-sm font-bold text-sky-600 dark:text-sky-400 uppercase">
+            <span className="text-xs font-semibold uppercase text-muted-foreground">
               {name.slice(0, 2)}
             </span>
           )}
-
-          {/* Live Health Status Dot */}
-          {!isCustomBookmark && (
-            <span
-              className={`absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full border-2 border-card ${
-                health === 'healthy'
-                  ? 'bg-emerald-500 ring-2 ring-emerald-500/20'
-                  : health === 'unhealthy'
-                  ? 'bg-rose-500 ring-2 ring-rose-500/20'
-                  : state === 'running'
-                  ? 'bg-sky-500'
-                  : 'bg-zinc-400'
-              }`}
-              title={`Health: ${health}, State: ${state}`}
-            />
-          )}
         </div>
 
-        <div className="flex-1 min-w-0">
-          <h4 className="text-sm font-semibold text-foreground truncate group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
-            {name}
-          </h4>
-          <p className="text-xs text-muted-foreground truncate font-mono">
-            {container?.ports && container.ports.length > 0 ? (
-              <span className="text-sky-600 dark:text-sky-400 font-medium">
-                :{container.ports.map((p) => p.publicPort || p.privatePort).join(', ')}
-              </span>
-            ) : bookmark ? (
-              <span className="text-muted-foreground">{bookmark.url}</span>
-            ) : (
-              <span className="text-muted-foreground/60">Internal network</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <h4 className="truncate text-sm font-medium text-foreground">{name}</h4>
+
+            {/* Actions stay visible on touch and keyboard focus, not hover-only. */}
+            <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(item);
+                }}
+                aria-label={`Configure ${name}`}
+                title="Configure"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+              </button>
+
+              {bookmark && onDeleteBookmark && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirmDelete) {
+                      onDeleteBookmark(bookmark.id);
+                    } else {
+                      setConfirmDelete(true);
+                      window.setTimeout(() => setConfirmDelete(false), 3000);
+                    }
+                  }}
+                  aria-label={confirmDelete ? `Confirm delete ${name}` : `Delete ${name}`}
+                  title={confirmDelete ? 'Click again to confirm' : 'Delete bookmark'}
+                  className={cn(
+                    'rounded p-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    confirmDelete
+                      ? 'bg-crit-soft text-crit'
+                      : 'text-muted-foreground hover:bg-accent hover:text-crit'
+                  )}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+
+              {hasValidUrl && (
+                <ArrowUpRight
+                  className="h-3.5 w-3.5 text-muted-foreground transition-colors group-hover:text-brand"
+                  aria-hidden="true"
+                />
+              )}
+            </div>
+          </div>
+
+          <p className="mt-0.5 flex items-center gap-1.5 truncate text-2xs text-muted-foreground">
+            {item.pinned && <Pin className="h-2.5 w-2.5 shrink-0 text-brand" aria-hidden="true" />}
+            <span className="truncate">{category}</span>
+            {portLabel && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="truncate font-mono">:{portLabel}</span>
+              </>
             )}
           </p>
         </div>
       </div>
 
-      {/* Bottom: Stats & Ports Bar */}
-      <div className="mt-3.5 pt-2.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-        {!isCustomBookmark && container ? (
-          <div className="flex items-center gap-2 font-mono text-[11px]">
-            {cpu !== undefined && (
-              <span>
-                <strong className="text-sky-600 dark:text-sky-400">{cpu.toFixed(1)}%</strong> CPU
-              </span>
-            )}
-            {mem !== undefined && (
-              <>
-                <span className="text-border">•</span>
-                <span>
-                  <strong className="text-violet-600 dark:text-violet-400">{formatBytes(mem, 0)}</strong>
-                </span>
-              </>
-            )}
-            {cpu === undefined && mem === undefined && (
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3 text-emerald-500" />
-                {container.status}
-              </span>
-            )}
-          </div>
-        ) : (
-          <div className="text-[11px] text-muted-foreground truncate">
-            {bookmark?.description || 'Custom Web Shortcut'}
-          </div>
-        )}
-
-        {hasValidUrl ? (
-          <span className="text-[10px] text-sky-600 dark:text-sky-400 font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
-            Open ↗
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-2.5 text-2xs text-muted-foreground">
+        {status ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', status.dot)} aria-hidden="true" />
+            <span className="truncate">{status.label}</span>
           </span>
         ) : (
-          <span className="text-[10px] text-muted-foreground font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-            Configure ⚙
+          <span className="truncate">{bookmark?.description || 'Bookmark'}</span>
+        )}
+
+        {container && (container.cpuPercent !== undefined || container.memoryBytes !== undefined) && (
+          <span className="shrink-0 font-mono">
+            {container.cpuPercent !== undefined && `${container.cpuPercent.toFixed(1)}%`}
+            {container.cpuPercent !== undefined && container.memoryBytes !== undefined && ' · '}
+            {container.memoryBytes !== undefined && formatBytes(container.memoryBytes, 0)}
           </span>
         )}
       </div>

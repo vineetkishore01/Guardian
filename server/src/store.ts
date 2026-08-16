@@ -96,8 +96,11 @@ const DEFAULT_HOMELAB_ICONS: Record<string, { icon: string; category: string; di
 
 const DEFAULT_SETTINGS: DashboardSettings = {
   defaultHostMode: 'auto',
-  lanIp: process.env.SERVER_IP || '192.168.0.26',
-  tailscaleIp: process.env.TAILSCALE_IP || '100.94.238.9',
+  // Empty unless the operator supplies them. The header only offers a launch
+  // target once it is configured, so an unconfigured install shows "Auto"
+  // rather than advertising one particular homelab's addresses.
+  lanIp: process.env.SERVER_IP || '',
+  tailscaleIp: process.env.TAILSCALE_IP || '',
   refreshIntervalSec: 15,
   title: 'Guardian Dashboard',
 };
@@ -170,7 +173,12 @@ export function saveUserConfig(config: UserConfigStore): void {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf-8');
+    // Write to a sibling temp file and rename. A crash mid-write would
+    // otherwise leave a truncated guardian.json that fails to parse on the next
+    // boot, silently resetting every user customisation to defaults.
+    const tmpPath = `${filePath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, filePath);
   } catch (err) {
     console.error('[Store] Failed to save config file:', (err as Error).message);
   }
@@ -214,6 +222,101 @@ export function updateSettings(settings: Partial<DashboardSettings>): UserConfig
   config.settings = { ...config.settings, ...settings };
   saveUserConfig(config);
   return config;
+}
+
+/* ------------------------------------------------------------------ *
+ * Input sanitisation
+ *
+ * These endpoints write straight to a JSON file that is reloaded on every
+ * boot. The handlers used to spread `req.body` in wholesale, so any client
+ * could persist arbitrary keys (or a 10 MB string) into the config. Each
+ * sanitiser returns `null` when the payload is unusable so the route can
+ * answer 400 instead of storing junk.
+ * ------------------------------------------------------------------ */
+
+const MAX_STR = 512;
+
+function cleanString(value: unknown, max: number = MAX_STR): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, max) : undefined;
+}
+
+function cleanBool(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+/** Drops undefined entries so a patch never overwrites a value with `undefined`. */
+function compact<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+export function sanitizeContainerOverride(
+  body: unknown
+): Partial<UserConfigStore['containers'][string]> | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+
+  const patch = compact({
+    displayName: cleanString(b.displayName, 120),
+    iconUrl: cleanString(b.iconUrl, 2048),
+    customUrl: cleanString(b.customUrl, 2048),
+    category: cleanString(b.category, 60),
+    hidden: cleanBool(b.hidden),
+    pinned: cleanBool(b.pinned),
+    order: typeof b.order === 'number' && Number.isFinite(b.order) ? b.order : undefined,
+  });
+
+  // An explicitly cleared field should erase the override, not be ignored.
+  if (b.iconUrl === '' || b.iconUrl === null) patch.iconUrl = undefined;
+  if (b.customUrl === '' || b.customUrl === null) patch.customUrl = undefined;
+
+  return patch;
+}
+
+export function sanitizeCustomApp(body: unknown): CustomAppBookmark | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+
+  const name = cleanString(b.name, 120);
+  const url = cleanString(b.url, 2048);
+  if (!name || !url) return null;
+
+  return {
+    id: cleanString(b.id, 80) || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    url,
+    iconUrl: cleanString(b.iconUrl, 2048),
+    category: cleanString(b.category, 60) || 'General',
+    description: cleanString(b.description, 280),
+    pinned: cleanBool(b.pinned) ?? false,
+  };
+}
+
+const HOST_MODES = new Set(['auto', 'lan', 'tailscale', 'custom']);
+
+export function sanitizeSettings(body: unknown): Partial<DashboardSettings> | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+
+  const mode = typeof b.defaultHostMode === 'string' && HOST_MODES.has(b.defaultHostMode)
+    ? (b.defaultHostMode as DashboardSettings['defaultHostMode'])
+    : undefined;
+
+  const interval = Number(b.refreshIntervalSec);
+
+  return compact({
+    defaultHostMode: mode,
+    lanIp: cleanString(b.lanIp, 255),
+    tailscaleIp: cleanString(b.tailscaleIp, 255),
+    customHostUrl: cleanString(b.customHostUrl, 255),
+    title: cleanString(b.title, 120),
+    // Clamped here as well as in the server loop, so a bad value can never be
+    // persisted in the first place.
+    refreshIntervalSec: Number.isFinite(interval)
+      ? Math.min(300, Math.max(5, Math.round(interval)))
+      : undefined,
+  });
 }
 
 export function getDefaultIconPreset(name: string): { icon: string; category: string; displayName?: string } | null {

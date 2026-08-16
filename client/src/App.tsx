@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AlertCircle, RefreshCw, Info } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
@@ -8,8 +9,18 @@ import { ServicesTable } from './components/services/ServicesTable';
 import { SettingsModal } from './components/layout/SettingsModal';
 import { AddAppModal } from './components/apps/AddAppModal';
 import { useLiveTelemetry } from './hooks/useLiveTelemetry';
-import { RefreshCw, Server, AlertCircle } from 'lucide-react';
 import { Button } from './components/ui/Button';
+import { formatAgo, formatBytes } from './lib/utils';
+
+/** Quiet section heading. The data below it should be the loudest thing. */
+function SectionHeading({ title, aside }: { title: string; aside?: React.ReactNode }) {
+  return (
+    <div className="mb-2.5 flex items-baseline justify-between gap-3">
+      <h2 className="section-label">{title}</h2>
+      {aside && <div className="shrink-0 text-2xs text-muted-foreground">{aside}</div>}
+    </div>
+  );
+}
 
 export function App() {
   const {
@@ -29,122 +40,165 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addAppOpen, setAddAppOpen] = useState(false);
 
-  // Theme Management (Light / Dark)
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem('guardian_theme');
     if (saved) return saved === 'dark';
-    return true; // Default dark
+    // Match the pre-paint script in index.html so the two never disagree.
+    return !window.matchMedia('(prefers-color-scheme: light)').matches;
   });
 
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('guardian_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('guardian_theme', 'light');
-    }
+    document.documentElement.classList.toggle('dark', isDark);
+    localStorage.setItem('guardian_theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 
-  if (loading && !data) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-background text-foreground">
-        <div className="relative flex items-center justify-center h-16 w-16 rounded-2xl bg-sky-500/10 border border-sky-500/30 mb-4 animate-pulse">
-          <Server className="h-8 w-8 text-sky-500" />
-        </div>
-        <h2 className="text-lg font-bold text-foreground">Connecting to Guardian...</h2>
-        <p className="text-xs text-muted-foreground mt-1">Collecting telemetry from Debian 13 host & Docker daemon</p>
-      </div>
-    );
-  }
+  // Reflect the configured dashboard title in the tab.
+  useEffect(() => {
+    const title = data?.config?.settings?.title;
+    document.title = title ? `${title} — Guardian` : 'Guardian — Server Dashboard';
+  }, [data?.config?.settings?.title]);
+
+  const disks = data?.host?.disks;
+
+  // Every summary below is derived from live telemetry. The previous build
+  // printed fixed strings ("94% full", "16 Containers") that stayed put no
+  // matter what the server actually reported.
+  const storageSummary = useMemo(() => {
+    if (!disks || disks.length === 0) return null;
+    const tightest = disks.reduce((worst, d) => (d.usedPercent > worst.usedPercent ? d : worst));
+    return {
+      count: disks.length,
+      tightest,
+      totalFree: disks.reduce((sum, d) => sum + d.freeBytes, 0),
+    };
+  }, [disks]);
+
+  // Name any collector that fell back to sample data, so the banner can be
+  // explicit about what is and is not a real measurement.
+  const syntheticSources = useMemo(() => {
+    const sources = data?.sources;
+    if (!sources) return [];
+    return [
+      sources.host === 'synthetic' ? 'host' : null,
+      sources.docker === 'synthetic' ? 'Docker' : null,
+    ].filter((s): s is string => s !== null);
+  }, [data?.sources]);
+
+  const containerSummary = useMemo(() => {
+    const containers = data?.containers ?? [];
+    return {
+      total: containers.length,
+      running: containers.filter((c) => c.state === 'running').length,
+      bookmarks: data?.config?.customApps?.length ?? 0,
+    };
+  }, [data?.containers, data?.config?.customApps]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground transition-colors duration-200">
-      {/* Top Navbar Header */}
+    <div className="flex min-h-screen flex-col">
       <Header
         host={data?.host}
         settings={data?.config?.settings}
         dockerDf={data?.dockerDf}
         connected={connected}
         isDark={isDark}
-        onToggleTheme={() => setIsDark(!isDark)}
+        onToggleTheme={() => setIsDark((v) => !v)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenAddApp={() => setAddAppOpen(true)}
-        onOpenPruneModal={() => {
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
         onChangeHostMode={(mode) => updateSettings({ defaultHostMode: mode })}
       />
 
-      {/* Main Content Layout */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-6 sm:space-y-8">
-        {/* Error Warning Banner if disconnected */}
+      <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-7 px-4 py-6 sm:px-6 lg:px-8">
         {error && !connected && (
-          <div className="rounded-xl border border-rose-300 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-950/40 p-3.5 flex items-center justify-between text-xs text-rose-800 dark:text-rose-200">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-rose-500 flex-shrink-0" />
-              <span>Telemetry connection interrupted: {error}. Attempting auto-reconnect...</span>
-            </div>
-            <Button variant="outline" size="xs" onClick={() => refetch()} className="border-rose-300 dark:border-rose-500/30 text-rose-800 dark:text-rose-200">
-              <RefreshCw className="h-3 w-3 mr-1" /> Retry
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 rounded-lg border border-crit/25 bg-crit-soft/60 px-3.5 py-2.5 text-xs text-foreground"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0 text-crit" aria-hidden="true" />
+              <span className="truncate">
+                Telemetry stream interrupted ({error}). Retrying automatically.
+              </span>
+            </span>
+            <Button variant="outline" size="xs" onClick={() => refetch()}>
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              Retry
             </Button>
           </div>
         )}
 
-        {/* 1. Docker Storage Optimization Advisor Banner (16.4 GB reclaimable space) */}
+        {syntheticSources.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-warn/25 bg-warn-soft/60 px-3.5 py-2.5 text-xs">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
+            <p className="text-foreground">
+              Showing sample {syntheticSources.join(' and ')} data — Guardian could not reach the
+              real source.{' '}
+              <span className="text-muted-foreground">
+                {syntheticSources.includes('Docker')
+                  ? 'Mount /var/run/docker.sock to read live containers. '
+                  : ''}
+                {syntheticSources.includes('host')
+                  ? 'Host metrics need /proc and /sys from a Linux host.'
+                  : ''}
+              </span>
+            </p>
+          </div>
+        )}
+
         <PruneAdvisorBanner dockerDf={data?.dockerDf} onPrune={pruneDocker} />
 
-        {/* 2. Top Stats Bar: CPU %, RAM/Swap, Thermals (x86_pkg_temp ~47°C), Network I/O */}
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-mono">
-              Live System Telemetry
-            </h2>
-            <span className="text-[11px] text-muted-foreground font-mono">
-              Updated {new Date(data?.host?.timestamp || Date.now()).toLocaleTimeString()}
-            </span>
-          </div>
+        <section aria-labelledby="system-heading">
+          <SectionHeading
+            title="System"
+            aside={
+              data?.host?.timestamp ? (
+                <span title={new Date(data.host.timestamp).toLocaleString()}>
+                  updated {formatAgo(data.host.timestamp)}
+                </span>
+              ) : null
+            }
+          />
           <HostStatsBar host={data?.host} history={data?.history} />
         </section>
 
-        {/* 3. Storage Gauges: Critical /mnt/nas @ 94% + Root / @ 18% */}
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground font-mono">
-              Storage Pools & Partitions
-            </h2>
-            <span className="text-[11px] text-rose-600 dark:text-rose-400 font-mono font-medium">
-              /mnt/nas: 94% full (190 GB free)
-            </span>
-          </div>
-          <StorageGauges disks={data?.host?.disks} />
+        <section aria-labelledby="storage-heading">
+          <SectionHeading
+            title="Storage"
+            aside={
+              storageSummary ? (
+                <span>
+                  {formatBytes(storageSummary.totalFree)} free across {storageSummary.count} volume
+                  {storageSummary.count === 1 ? '' : 's'}
+                  {storageSummary.tightest.usedPercent >= 90 && (
+                    <span className="text-crit">
+                      {' '}
+                      · {storageSummary.tightest.mountPoint} at{' '}
+                      {storageSummary.tightest.usedPercent.toFixed(0)}%
+                    </span>
+                  )}
+                </span>
+              ) : null
+            }
+          />
+          <StorageGauges disks={disks} />
         </section>
 
-        {/* 4. CasaOS-Style App Launcher Grid (The Centerpiece) */}
-        <section className="space-y-3 pt-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-foreground tracking-tight">
-                Applications & Services
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Click any tile to launch in a new tab • Click gear to customize icon & custom URLs
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setAddAppOpen(true)}
-              className="text-xs text-sky-700 dark:text-sky-300 border-border"
-            >
-              + Add Bookmark
-            </Button>
-          </div>
-
+        <section aria-labelledby="apps-heading">
+          <SectionHeading
+            title="Applications"
+            aside={
+              <span>
+                {containerSummary.running} running
+                {containerSummary.total > containerSummary.running &&
+                  ` of ${containerSummary.total}`}
+                {containerSummary.bookmarks > 0 && ` · ${containerSummary.bookmarks} bookmarks`}
+              </span>
+            }
+          />
           <AppGrid
             containers={data?.containers}
             customApps={data?.config?.customApps}
             settings={data?.config?.settings}
+            loading={loading && !data}
             onSaveContainer={updateContainer}
             onSaveBookmark={addCustomApp}
             onDeleteBookmark={deleteCustomApp}
@@ -152,8 +206,7 @@ export function App() {
           />
         </section>
 
-        {/* 5. Health & Latency Prober Table */}
-        <section className="space-y-2 pt-4">
+        <section aria-labelledby="health-heading">
           <ServicesTable
             probes={data?.probes}
             settings={data?.config?.settings}
@@ -162,17 +215,18 @@ export function App() {
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-border bg-card/50 py-6 text-center text-xs text-muted-foreground">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p>Guardian — Ultra-lightweight Server & Docker Dashboard</p>
-          <p className="font-mono text-[11px] text-foreground font-medium">
-            Debian 13 • 16 Containers • Port :3001
-          </p>
+      <footer className="border-t border-border">
+        <div className="mx-auto flex max-w-[1600px] flex-col items-center justify-between gap-1 px-4 py-5 text-2xs text-muted-foreground sm:flex-row sm:px-6 lg:px-8">
+          <span>Guardian — self-hosted server &amp; Docker dashboard</span>
+          {data?.host && (
+            <span className="font-mono">
+              {data.host.hostname} · kernel {data.host.kernel} · {containerSummary.total} container
+              {containerSummary.total === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
       </footer>
 
-      {/* Global Modals */}
       <SettingsModal
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

@@ -13,31 +13,45 @@ export interface TabsProps {
   activeTab: string;
   onChange: (id: string) => void;
   className?: string;
+  'aria-label'?: string;
 }
 
-export function Tabs({ tabs, activeTab, onChange, className }: TabsProps) {
+export function Tabs({ tabs, activeTab, onChange, className, ...props }: TabsProps) {
   return (
-    <div className={cn('inline-flex items-center gap-0.5 p-1 bg-muted/70 rounded-lg border border-border text-xs no-scrollbar overflow-x-auto max-w-full', className)}>
+    <div
+      role="tablist"
+      aria-label={props['aria-label'] ?? 'Categories'}
+      className={cn(
+        'no-scrollbar inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-lg border border-border bg-muted/60 p-1',
+        className
+      )}
+    >
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;
         return (
           <button
             key={tab.id}
+            role="tab"
+            type="button"
+            aria-selected={isActive}
             onClick={() => onChange(tab.id)}
             className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-all whitespace-nowrap select-none',
+              'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               isActive
-                ? 'bg-background text-foreground shadow-sm border border-border/60 font-semibold'
-                : 'text-muted-foreground hover:text-foreground hover:bg-background/40'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            {tab.icon && <span className="h-3.5 w-3.5">{tab.icon}</span>}
+            {tab.icon && <span className="flex h-3.5 w-3.5 items-center">{tab.icon}</span>}
             <span>{tab.label}</span>
             {tab.count !== undefined && (
+              // Previously `py-0.2`, which is not a real Tailwind step and so
+              // emitted no padding at all.
               <span
                 className={cn(
-                  'px-1.5 py-0.2 text-[10px] rounded-full font-mono',
-                  isActive ? 'bg-secondary text-foreground' : 'text-muted-foreground/70'
+                  'rounded px-1 py-px font-mono text-2xs',
+                  isActive ? 'text-muted-foreground' : 'text-muted-foreground/70'
                 )}
               >
                 {tab.count}

@@ -14,7 +14,9 @@ services:
       # Host telemetry
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-      # Storage monitoring
+      # Lets Guardian report the real distro name instead of guessing
+      - /etc/os-release:/host/etc/os-release:ro
+      # Storage monitoring — mount whatever you want measured
       - /:/host/root:ro
       - /mnt/nas:/host/mnt/nas:ro
       # Persistent icons and URLs config
@@ -22,8 +24,12 @@ services:
     environment:
       - HOST_PROC=/host/proc
       - HOST_SYS=/host/sys
+      - HOST_ETC=/host/etc
       - HOST_ROOT=/host/root
       - HOST_NAS=/host/mnt/nas
+      # Optional: extra mount points to watch, comma separated
+      # - HOST_MOUNTS=/host/mnt/backup
+      # Seed the LAN / Tailscale launch targets; both editable in Settings
       - SERVER_IP=192.168.0.26
       - TAILSCALE_IP=100.94.238.9
       - PORT=3001

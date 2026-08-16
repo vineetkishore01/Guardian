@@ -94,7 +94,13 @@ function probeUrl(target: ProbeTarget, hostIp: string): Promise<ServiceProbeResu
   });
 }
 
-export async function runServiceProbes(hostIp: string = '192.168.0.26', force: boolean = false): Promise<ServiceProbeResult[]> {
+export async function runServiceProbes(
+  hostIp: string = '',
+  force: boolean = false
+): Promise<ServiceProbeResult[]> {
+  // Probe the loopback interface when no LAN address is configured; the server
+  // and the services it watches normally share a host.
+  const target = hostIp && hostIp.trim() ? hostIp.trim() : '127.0.0.1';
   const now = Date.now();
   // Probe cache: only run every 60s unless forced
   if (!force && cachedProbeResults.length > 0 && now - lastProbeTime < 60000) {
@@ -102,7 +108,7 @@ export async function runServiceProbes(hostIp: string = '192.168.0.26', force: b
   }
 
   try {
-    const promises = PROBE_TARGETS.map((target) => probeUrl(target, hostIp));
+    const promises = PROBE_TARGETS.map((probeTarget) => probeUrl(probeTarget, target));
     cachedProbeResults = await Promise.all(promises);
     lastProbeTime = now;
     return cachedProbeResults;

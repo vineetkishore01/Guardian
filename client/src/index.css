@@ -2,67 +2,109 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Guardian design tokens.
+ *
+ * Colour discipline: the neutral ramp carries the whole interface. Exactly one
+ * brand hue (--brand) marks interactive affordances, and the three status hues
+ * (ok / warn / crit) are reserved for state. A metric is never coloured for
+ * decoration -- if a number is amber, it is amber because it crossed a
+ * threshold. This is what keeps a dense telemetry view readable.
+ */
+
 @layer base {
   :root {
-    --background: 240 5% 97%;
-    --foreground: 240 10% 3.9%;
+    --background: 220 20% 97%;
+    --foreground: 222 24% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 222 24% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
+    --popover-foreground: 222 24% 11%;
 
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
+    --primary: 222 24% 14%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 240 4.8% 93.5%;
-    --secondary-foreground: 240 5.9% 10%;
+    --secondary: 220 16% 94%;
+    --secondary-foreground: 222 20% 20%;
 
-    --muted: 240 4.8% 93.5%;
-    --muted-foreground: 240 3.8% 46.1%;
+    --muted: 220 16% 94%;
+    --muted-foreground: 220 9% 46%;
 
-    --accent: 240 4.8% 93.5%;
-    --accent-foreground: 240 5.9% 10%;
+    --accent: 220 16% 93%;
+    --accent-foreground: 222 24% 14%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 240 5.9% 88%;
-    --input: 240 5.9% 88%;
-    --ring: 240 5.9% 10%;
+    --border: 220 15% 89%;
+    --input: 220 15% 87%;
+    --ring: 222 84% 55%;
 
-    --radius: 0.625rem;
+    /* Single brand hue -- interactive affordances only. */
+    --brand: 222 84% 55%;
+    --brand-foreground: 0 0% 100%;
+    --brand-soft: 222 84% 96%;
+
+    /* Status hues -- state only, never decoration. */
+    --ok: 158 68% 34%;
+    --ok-soft: 158 64% 95%;
+    --warn: 32 88% 42%;
+    --warn-soft: 38 92% 95%;
+    --crit: 351 74% 47%;
+    --crit-soft: 0 86% 96%;
+
+    /* Elevation: a hairline top highlight plus a soft ambient shadow is what
+       separates a crafted surface from a plain 1px box. */
+    --surface-highlight: 0 0% 100%;
+    --surface-shadow: 220 40% 20%;
+
+    --radius: 0.7rem;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
+    --background: 224 24% 7%;
+    --foreground: 220 14% 96%;
 
-    --card: 240 10% 6.5%;
-    --card-foreground: 0 0% 98%;
+    --card: 224 20% 10%;
+    --card-foreground: 220 14% 96%;
 
-    --popover: 240 10% 6.5%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 224 22% 11%;
+    --popover-foreground: 220 14% 96%;
 
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
+    --primary: 220 14% 96%;
+    --primary-foreground: 224 24% 9%;
 
-    --secondary: 240 3.7% 14%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 223 17% 16%;
+    --secondary-foreground: 220 14% 96%;
 
-    --muted: 240 3.7% 14%;
-    --muted-foreground: 240 5% 64.9%;
+    --muted: 223 17% 15%;
+    --muted-foreground: 220 10% 62%;
 
-    --accent: 240 3.7% 14%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 223 17% 18%;
+    --accent-foreground: 220 14% 96%;
 
-    --destructive: 0 62.8% 40.6%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 240 3.7% 16%;
-    --input: 240 3.7% 16%;
-    --ring: 240 4.9% 83.9%;
+    --border: 223 15% 19%;
+    --input: 223 15% 22%;
+    --ring: 217 91% 62%;
+
+    --brand: 217 91% 62%;
+    --brand-foreground: 224 24% 9%;
+    --brand-soft: 222 47% 17%;
+
+    --ok: 158 64% 48%;
+    --ok-soft: 158 40% 14%;
+    --warn: 38 92% 58%;
+    --warn-soft: 32 45% 14%;
+    --crit: 351 83% 63%;
+    --crit-soft: 350 45% 15%;
+
+    --surface-highlight: 220 20% 100%;
+    --surface-shadow: 224 60% 2%;
   }
 }
 
@@ -70,49 +112,208 @@
   * {
     border-color: hsl(var(--border));
   }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+      'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     min-height: 100vh;
     letter-spacing: -0.011em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* A very quiet vertical wash. Enough to stop the page reading as a flat
+     sheet, far short of a "gradient background". */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: radial-gradient(
+      110% 70% at 50% -10%,
+      hsl(var(--brand) / 0.05) 0%,
+      transparent 60%
+    );
+  }
+
+  #root {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Digits in a live dashboard must not reflow as values tick. */
+  .tabular,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
 }
 
-/* Subtle Card Hover & Surfaces */
-.card-hover {
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+@layer components {
+  /*
+   * The core surface. Previously `glass-card` was referenced by every metric
+   * card, storage gauge and app tile but never defined anywhere -- which is why
+   * the whole dashboard rendered as flat 1px rectangles with no hover response.
+   */
+  .surface,
+  .glass-card {
+    position: relative;
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    box-shadow:
+      0 1px 2px -1px hsl(var(--surface-shadow) / 0.08),
+      0 1px 3px 0 hsl(var(--surface-shadow) / 0.05);
+    transition:
+      border-color 0.18s ease,
+      box-shadow 0.18s ease,
+      transform 0.18s ease,
+      background-color 0.18s ease;
+  }
+
+  /* Hairline highlight along the top edge -- reads as a lit bevel. */
+  .surface::after,
+  .glass-card::after {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1px;
+    border-radius: var(--radius) var(--radius) 0 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--surface-highlight) / 0.55),
+      transparent
+    );
+    pointer-events: none;
+  }
+
+  .dark .surface::after,
+  .dark .glass-card::after {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--surface-highlight) / 0.09),
+      transparent
+    );
+  }
+
+  .surface-interactive {
+    cursor: pointer;
+  }
+
+  .surface-interactive:hover {
+    border-color: hsl(var(--brand) / 0.35);
+    box-shadow:
+      0 2px 4px -2px hsl(var(--surface-shadow) / 0.1),
+      0 8px 20px -8px hsl(var(--surface-shadow) / 0.18);
+    transform: translateY(-2px);
+  }
+
+  .dark .surface-interactive:hover {
+    border-color: hsl(var(--brand) / 0.45);
+    box-shadow:
+      0 2px 6px -2px hsl(var(--surface-shadow) / 0.5),
+      0 12px 28px -10px hsl(var(--surface-shadow) / 0.65);
+  }
+
+  .surface-interactive:active {
+    transform: translateY(0);
+    transition-duration: 0.06s;
+  }
+
+  /* Section heading: quiet label, never competing with the data beneath it. */
+  .section-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: hsl(var(--foreground));
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 25%,
+      hsl(var(--accent)) 37%,
+      hsl(var(--muted)) 63%
+    );
+    background-size: 400% 100%;
+    animation: skeleton-sweep 1.4s ease-in-out infinite;
+    border-radius: calc(var(--radius) - 3px);
+  }
+
+  @keyframes skeleton-sweep {
+    0% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0 50%;
+    }
+  }
 }
-.card-hover:hover {
-  border-color: rgba(161, 161, 170, 0.6);
-  box-shadow: 0 4px 14px -3px rgba(0, 0, 0, 0.08);
-}
-.dark .card-hover:hover {
-  border-color: rgba(63, 63, 70, 1);
-  box-shadow: 0 4px 20px -3px rgba(0, 0, 0, 0.4);
+
+@layer utilities {
+  /* Referenced by the category tab strip; previously undefined, so the strip
+     rendered a scrollbar across the middle of the control. */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* Scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 10px;
+  height: 10px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-  background-color: rgba(212, 212, 216, 0.9);
+  background-color: hsl(var(--muted-foreground) / 0.28);
   border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
-.dark ::-webkit-scrollbar-thumb {
-  background-color: rgba(63, 63, 70, 0.8);
-}
+
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(161, 161, 170, 1);
+  background-color: hsl(var(--muted-foreground) / 0.5);
+  background-clip: content-box;
 }
-.dark ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(82, 82, 91, 1);
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .surface-interactive:hover {
+    transform: none;
+  }
 }

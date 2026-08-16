@@ -1,41 +1,33 @@
 import React from 'react';
 import { cn } from '../../lib/utils';
 
-export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
-  variant?:
-    | 'default'
-    | 'secondary'
-    | 'outline'
-    | 'destructive'
-    | 'success'
-    | 'warning'
-    | 'pastel-sky'
-    | 'pastel-mint'
-    | 'pastel-lavender'
-    | 'pastel-peach'
-    | 'pastel-amber';
+/*
+ * Deliberately small variant set. The previous five "pastel-*" variants let any
+ * card pick any hue, which is how the dashboard ended up with sky / violet /
+ * mint / peach / amber all shouting at equal volume. Colour here now means
+ * state; `neutral` is the default and should cover most labels.
+ */
+export type BadgeVariant = 'neutral' | 'brand' | 'ok' | 'warn' | 'crit' | 'outline';
+
+export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
+  variant?: BadgeVariant;
 }
 
-export function Badge({ className, variant = 'default', ...props }: BadgeProps) {
-  const variantStyles = {
-    default: 'bg-primary text-primary-foreground border-transparent',
-    secondary: 'bg-secondary text-secondary-foreground border-border',
-    outline: 'border-border text-muted-foreground bg-transparent',
-    destructive: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
-    success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-    warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
-    'pastel-sky': 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20',
-    'pastel-mint': 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-    'pastel-lavender': 'bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20',
-    'pastel-peach': 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
-    'pastel-amber': 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
-  };
+const VARIANTS: Record<BadgeVariant, string> = {
+  neutral: 'bg-secondary text-secondary-foreground border-transparent',
+  brand: 'bg-brand-soft text-brand border-brand/20',
+  ok: 'bg-ok-soft text-ok border-ok/20',
+  warn: 'bg-warn-soft text-warn border-warn/20',
+  crit: 'bg-crit-soft text-crit border-crit/20',
+  outline: 'bg-transparent text-muted-foreground border-border',
+};
 
+export function Badge({ className, variant = 'neutral', ...props }: BadgeProps) {
   return (
-    <div
+    <span
       className={cn(
-        'inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] sm:text-[11px] font-medium tracking-wide transition-colors',
-        variantStyles[variant],
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-2xs font-medium leading-none',
+        VARIANTS[variant],
         className
       )}
       {...props}

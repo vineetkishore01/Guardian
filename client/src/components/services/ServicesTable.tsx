@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
-import { Activity, RefreshCw, ExternalLink } from 'lucide-react';
-import { Card } from '../ui/Card';
+import React, { useState, useMemo } from 'react';
+import { RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { ServiceProbeResult, DashboardSettings } from '../../types/dashboard';
-import { getActiveHost } from '../../lib/utils';
+import { getActiveHost, cn, formatAgo } from '../../lib/utils';
 
 interface ServicesTableProps {
   probes?: ServiceProbeResult[];
@@ -12,9 +11,38 @@ interface ServicesTableProps {
   onRefreshProbes: () => Promise<ServiceProbeResult[]>;
 }
 
+/** Honest label for an HTTP status. Previously anything that was not 401/403/302
+ *  rendered as "OK", so a 500 displayed as "500 OK". */
+function describeStatus(code: number | null): { text: string; tone: 'ok' | 'warn' | 'crit' } {
+  if (code === null) return { text: 'No response', tone: 'crit' };
+  if (code >= 200 && code < 300) return { text: 'OK', tone: 'ok' };
+  if (code === 401) return { text: 'Auth required', tone: 'warn' };
+  if (code === 403) return { text: 'Forbidden', tone: 'warn' };
+  if (code >= 300 && code < 400) return { text: 'Redirect', tone: 'ok' };
+  if (code >= 400 && code < 500) return { text: 'Client error', tone: 'warn' };
+  return { text: 'Server error', tone: 'crit' };
+}
+
+function latencyTone(ms: number | null): string {
+  if (ms === null) return 'text-muted-foreground';
+  if (ms < 200) return 'text-foreground';
+  if (ms < 1000) return 'text-warn';
+  return 'text-crit';
+}
+
 export function ServicesTable({ probes = [], settings, onRefreshProbes }: ServicesTableProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+
+  const activeHost = getActiveHost(settings);
+
+  const { reachable, lastChecked } = useMemo(
+    () => ({
+      reachable: probes.filter((p) => p.status !== 'down').length,
+      lastChecked: probes.reduce((max, p) => Math.max(max, p.lastChecked || 0), 0),
+    }),
+    [probes]
+  );
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -25,130 +53,114 @@ export function ServicesTable({ probes = [], settings, onRefreshProbes }: Servic
     }
   };
 
-  const activeHost = getActiveHost(settings);
+  const allUp = probes.length > 0 && reachable === probes.length;
 
   return (
-    <Card className="border-border overflow-hidden">
-      <div className="p-3.5 sm:p-4 flex items-center justify-between border-b border-border bg-secondary/30">
-        <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-md bg-secondary text-foreground border border-border">
-            <Activity className="h-4 w-4 text-sky-500" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-foreground">Service Health & Latency Prober</h3>
-              <Badge variant="secondary" className="text-[10px]">
-                {probes.length} endpoints
-              </Badge>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Monitors host web services & container endpoints (60s cycle, 3s timeout)
+    <div className="surface overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setCollapsed((c) => !c)}
+          aria-expanded={!collapsed}
+          className="flex min-w-0 items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+              collapsed && '-rotate-90'
+            )}
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium text-foreground">Endpoint health</h3>
+            <p className="truncate text-2xs text-muted-foreground">
+              {probes.length > 0 ? (
+                <>
+                  <span className={allUp ? 'text-ok' : 'text-warn'}>
+                    {reachable}/{probes.length} reachable
+                  </span>
+                  {lastChecked > 0 && ` · checked ${formatAgo(lastChecked)}`}
+                </>
+              ) : (
+                'No endpoints configured'
+              )}
             </p>
           </div>
-        </div>
+        </button>
 
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => setCollapsed(!collapsed)}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            {collapsed ? 'Expand' : 'Collapse'}
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-1 text-xs"
-          >
-            <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
-            <span>Re-Probe</span>
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
+          <RefreshCw className={cn('h-3 w-3', refreshing && 'animate-spin')} aria-hidden="true" />
+          <span className="hidden sm:inline">{refreshing ? 'Probing…' : 'Re-probe'}</span>
+        </Button>
       </div>
 
-      {!collapsed && (
+      {!collapsed && probes.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-foreground">
-            <thead className="bg-secondary/40 text-[11px] uppercase tracking-wider text-muted-foreground border-b border-border font-medium font-mono">
+          <table className="w-full text-left text-xs">
+            <thead className="border-b border-border text-2xs font-medium text-muted-foreground">
               <tr>
-                <th className="px-4 py-2.5">Service</th>
-                <th className="px-4 py-2.5">Endpoint</th>
-                <th className="px-4 py-2.5">Status Code</th>
-                <th className="px-4 py-2.5">Latency</th>
-                <th className="px-4 py-2.5 text-right">Health</th>
+                <th scope="col" className="px-4 py-2 font-medium">Service</th>
+                <th scope="col" className="px-4 py-2 font-medium">Port</th>
+                <th scope="col" className="px-4 py-2 font-medium">Response</th>
+                <th scope="col" className="px-4 py-2 text-right font-medium">Latency</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border font-mono">
+            <tbody className="divide-y divide-border">
               {probes.map((probe) => {
                 const isUp = probe.status !== 'down';
+                const status = describeStatus(probe.statusCode ?? null);
                 const url = `http://${activeHost}:${probe.port}`;
 
                 return (
-                  <tr
-                    key={probe.name}
-                    className="hover:bg-muted/40 transition-colors"
-                  >
-                    <td className="px-4 py-2.5 font-sans font-medium text-foreground">
+                  <tr key={`${probe.name}:${probe.port}`} className="transition-colors hover:bg-muted/40">
+                    <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <span
-                          className={`h-1.5 w-1.5 rounded-full ${
-                            isUp ? 'bg-emerald-500 ring-2 ring-emerald-500/20' : 'bg-rose-500'
-                          }`}
+                          className={cn(
+                            'h-1.5 w-1.5 shrink-0 rounded-full',
+                            isUp ? 'bg-ok' : 'bg-crit'
+                          )}
+                          aria-hidden="true"
                         />
-                        <span>{probe.name}</span>
+                        <span className="font-medium text-foreground">{probe.name}</span>
                         {probe.notes && (
-                          <span className="text-[10px] text-muted-foreground font-normal">
-                            ({probe.notes})
+                          <span className="hidden truncate text-2xs text-muted-foreground sm:inline">
+                            {probe.notes}
                           </span>
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
+
+                    <td className="px-4 py-2.5">
                       <a
                         href={url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 font-mono"
+                        className="inline-flex items-center gap-1 font-mono text-muted-foreground transition-colors hover:text-brand"
                       >
-                        :{probe.port}
-                        <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                        {probe.port}
+                        <ExternalLink className="h-2.5 w-2.5 opacity-60" aria-hidden="true" />
                       </a>
                     </td>
+
                     <td className="px-4 py-2.5">
-                      {probe.statusCode ? (
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                            probe.statusCode === 200
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                              : probe.statusCode === 401 || probe.statusCode === 403
-                              ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
-                              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
-                          }`}
-                        >
-                          {probe.statusCode} {probe.statusCode === 401 ? 'Auth' : probe.statusCode === 403 ? 'Forbidden' : probe.statusCode === 302 ? 'Redirect' : 'OK'}
-                        </span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold border border-rose-500/20">
-                          ERR
-                        </span>
-                      )}
+                      <Badge variant={status.tone}>
+                        {probe.statusCode !== null && probe.statusCode !== undefined && (
+                          <span className="font-mono">{probe.statusCode}</span>
+                        )}
+                        {status.text}
+                      </Badge>
                     </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {probe.latencyMs ? `${probe.latencyMs} ms` : '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-sans">
-                      {isUp ? (
-                        <Badge variant="success" className="text-[10px]">
-                          Available
-                        </Badge>
-                      ) : (
-                        <Badge variant="destructive" className="text-[10px]">
-                          Unreachable
-                        </Badge>
+
+                    <td
+                      className={cn(
+                        'px-4 py-2.5 text-right font-mono',
+                        latencyTone(probe.latencyMs ?? null)
                       )}
+                    >
+                      {probe.latencyMs !== null && probe.latencyMs !== undefined
+                        ? `${probe.latencyMs} ms`
+                        : '—'}
                     </td>
                   </tr>
                 );
@@ -157,6 +169,6 @@ export function ServicesTable({ probes = [], settings, onRefreshProbes }: Servic
           </table>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

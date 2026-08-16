@@ -6,3 +6,6 @@ data/*.json
 .env.local
 .DS_Store
 *.log
+
+# Runtime config written when the server runs outside a container
+server/data/

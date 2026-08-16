@@ -124,10 +124,12 @@ function parseProcMeminfo(): MemoryInfo {
       availableBytes: free,
       buffersBytes: 0,
       cachedBytes: 0,
-      usedPercent: Math.round((used / total) * 100),
-      swapTotalBytes: 3 * 1024 * 1024 * 1024,
-      swapUsedBytes: 1.4 * 1024 * 1024 * 1024,
-      swapPercent: 46,
+      usedPercent: Math.round((used / total) * 1000) / 10,
+      // Swap is not observable without /proc/meminfo. Report zero rather than
+      // the previous invented "1.4 GB of 3 GB".
+      swapTotalBytes: 0,
+      swapUsedBytes: 0,
+      swapPercent: 0,
     };
   }
 
@@ -232,14 +234,10 @@ function parseThermals(): ThermalSensor[] {
     // Ignore error
   }
 
-  if (sensors.length === 0) {
-    sensors.push(
-      { name: 'thermal_zone0', label: 'x86_pkg_temp', tempC: 47.0, isCritical: false },
-      { name: 'thermal_zone1', label: 'pch_cannonlake', tempC: 46.0, isCritical: false },
-      { name: 'thermal_zone2', label: 'B0D4', tempC: 48.0, isCritical: false },
-    );
-  }
-
+  // No invented readings. A machine without exposed thermal zones (a Mac, a
+  // container without /sys, a VM) reports none, and the UI says so. Previously
+  // this returned a fixed 47°C "x86_pkg_temp", which looked exactly like a real
+  // measurement.
   return sensors;
 }
 
@@ -284,14 +282,26 @@ function parseNetwork(): NetworkInterface[] {
     }
   }
 
-  if (results.length === 0) {
-    results.push(
-      { name: 'eno1', rxBytesPerSec: 142000, txBytesPerSec: 85000, rxTotalBytes: 524288000, txTotalBytes: 314572800 },
-      { name: 'tailscale0', rxBytesPerSec: 18000, txBytesPerSec: 12000, rxTotalBytes: 104857600, txTotalBytes: 62914560 },
-    );
-  }
-
+  // Same principle as thermals: report nothing rather than invent an "eno1"
+  // pushing a plausible-looking 142 KB/s.
   return results;
+}
+
+/** Reads the distro name from /etc/os-release instead of asserting "Debian 13". */
+function detectOsName(): string {
+  const release = safeReadFile(path.join(process.env.HOST_ETC || '/etc', 'os-release'));
+  if (release) {
+    const pretty = release.match(/^PRETTY_NAME="?([^"\n]+)"?/m);
+    if (pretty) return pretty[1];
+    const name = release.match(/^NAME="?([^"\n]+)"?/m);
+    if (name) return name[1];
+  }
+  return `${os.type()} ${os.release()}`;
+}
+
+/** True when the Linux procfs this collector depends on is actually readable. */
+export function isHostDataLive(): boolean {
+  return fs.existsSync(path.join(PROC_DIR, 'stat'));
 }
 
 export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
@@ -303,12 +313,12 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
   const network = parseNetwork();
 
   const cpus = os.cpus();
-  const cpuModel = cpus.length > 0 ? cpus[0].model : 'Intel Core i5-8265U (8 threads)';
+  const cpuModel = cpus.length > 0 ? cpus[0].model : 'Unknown CPU';
 
   return {
-    hostname: os.hostname() || 'serverx',
-    os: 'Debian 13 (trixie)',
-    kernel: os.release() || '7.0.13',
+    hostname: os.hostname() || 'unknown',
+    os: detectOsName(),
+    kernel: os.release(),
     uptimeSeconds: uptime.seconds,
     uptimeFormatted: uptime.formatted,
     cpu: {

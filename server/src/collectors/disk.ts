@@ -1,93 +1,143 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { DiskMount } from '../types.js';
-
-interface MountTarget {
-  path: string;
-  label: string;
-  expectedFs?: string;
-}
 
 const ROOT_PATH = process.env.HOST_ROOT || '/';
 const NAS_PATH = process.env.HOST_NAS || '/mnt/nas';
 
-export function collectDiskUsage(): DiskMount[] {
-  const mounts: DiskMount[] = [];
-  const targets: MountTarget[] = [
-    { path: NAS_PATH, label: 'NAS Pool (/mnt/nas — RamSetu)' },
-    { path: ROOT_PATH, label: 'System Root (/ & Docker)' },
+/** Extra mount points to watch, comma separated. */
+const EXTRA_MOUNTS = (process.env.HOST_MOUNTS || '')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+const PROC_MOUNTS = path.join(process.env.HOST_PROC || '/proc', 'mounts');
+
+/** Filesystems that are never interesting as "storage" in a dashboard. */
+const PSEUDO_FS = new Set([
+  'proc', 'sysfs', 'devtmpfs', 'devpts', 'tmpfs', 'cgroup', 'cgroup2', 'overlay',
+  'squashfs', 'ramfs', 'securityfs', 'debugfs', 'tracefs', 'fusectl', 'configfs',
+  'pstore', 'bpf', 'mqueue', 'hugetlbfs', 'autofs', 'binfmt_misc', 'efivarfs',
+  'nsfs', 'rpc_pipefs',
+]);
+
+interface MountInfo {
+  mountPoint: string;
+  device: string;
+  fsType: string;
+}
+
+/**
+ * Reads real mounts from /proc/mounts so the filesystem type and backing device
+ * are reported accurately. The previous version guessed: any path containing
+ * "nas" was labelled xfs on /dev/mapper/nas-lvm, everything else ext4 on
+ * /dev/sda1, regardless of what was actually mounted.
+ */
+function readProcMounts(): Map<string, MountInfo> {
+  const result = new Map<string, MountInfo>();
+  try {
+    if (!fs.existsSync(PROC_MOUNTS)) return result;
+    const content = fs.readFileSync(PROC_MOUNTS, 'utf-8');
+    for (const line of content.split('\n')) {
+      const [device, mountPoint, fsType] = line.split(/\s+/);
+      if (!device || !mountPoint || !fsType) continue;
+      if (PSEUDO_FS.has(fsType)) continue;
+      // Octal escapes for spaces and friends, as written by the kernel.
+      const decoded = mountPoint.replace(/\\040/g, ' ').replace(/\\011/g, '\t');
+      result.set(decoded, { mountPoint: decoded, device, fsType });
+    }
+  } catch {
+    // Not Linux, or /proc is not mounted.
+  }
+  return result;
+}
+
+/**
+ * Translates a path as this process sees it into the path the host knows.
+ *
+ * In a container the root filesystem is bind-mounted at HOST_ROOT
+ * (`/host/root`), so `/proc/mounts` — which is the *host's* table — lists it as
+ * `/`. Without this mapping every filesystem would report a blank device and
+ * type, and the root volume would be labelled "Root" instead of "System root".
+ */
+function toHostPath(containerPath: string): string {
+  const prefixes: Array<[string, string]> = [
+    [ROOT_PATH, '/'],
+    [NAS_PATH, NAS_PATH],
   ];
 
-  const seenDeviceSizes = new Set<string>();
+  for (const [prefix, hostBase] of prefixes) {
+    if (prefix === '/' || !prefix) continue;
+    if (containerPath === prefix) return hostBase;
+    if (containerPath.startsWith(`${prefix}/`)) {
+      const suffix = containerPath.slice(prefix.length);
+      return hostBase === '/' ? suffix : `${hostBase}${suffix}`;
+    }
+  }
+  return containerPath;
+}
 
-  for (const target of targets) {
+function labelFor(hostPath: string): string {
+  if (hostPath === '/') return 'System root';
+  const base = hostPath.split('/').filter(Boolean).pop();
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : hostPath;
+}
+
+export function collectDiskUsage(): DiskMount[] {
+  const procMounts = readProcMounts();
+
+  // Candidates: the root, the configured NAS path, any explicitly listed
+  // mounts, plus everything real that /proc/mounts reports.
+  const candidates = new Set<string>([ROOT_PATH, NAS_PATH, ...EXTRA_MOUNTS, ...procMounts.keys()]);
+
+  const mounts: DiskMount[] = [];
+  const seenDevices = new Set<string>();
+
+  for (const mountPoint of candidates) {
     try {
-      if (fs.existsSync(target.path)) {
-        const stat = fs.statfsSync(target.path);
-        const totalBytes = Number(stat.bsize) * Number(stat.blocks);
-        const freeBytes = Number(stat.bsize) * Number(stat.bavail);
-        const usedBytes = Math.max(0, totalBytes - freeBytes);
-        const usedPercent = totalBytes > 0 ? Math.round(((totalBytes - freeBytes) / totalBytes) * 1000) / 10 : 0;
+      if (!fs.existsSync(mountPoint)) continue;
 
-        // Dedupe identical volume sizes (e.g. if multiple mounts point to the same LVM volume)
-        const sizeKey = `${Math.round(totalBytes / 1e9)}GB-${Math.round(freeBytes / 1e9)}GB`;
-        if (!seenDeviceSizes.has(sizeKey)) {
-          seenDeviceSizes.add(sizeKey);
-          mounts.push({
-            mountPoint: target.path,
-            label: target.label,
-            device: target.path === NAS_PATH ? '/dev/mapper/nas-lvm' : '/dev/sda1',
-            fsType: target.path === NAS_PATH ? 'xfs' : 'ext4',
-            totalBytes,
-            usedBytes,
-            freeBytes,
-            usedPercent,
-            isCritical: usedPercent >= 90,
-            isWarning: usedPercent >= 80 && usedPercent < 90,
-          });
-        }
-      }
+      const stat = fs.statfsSync(mountPoint);
+      const totalBytes = Number(stat.bsize) * Number(stat.blocks);
+      const freeBytes = Number(stat.bsize) * Number(stat.bavail);
+
+      // Zero-sized filesystems are pseudo mounts that slipped through.
+      if (!Number.isFinite(totalBytes) || totalBytes <= 0) continue;
+
+      const usedBytes = Math.max(0, totalBytes - freeBytes);
+      const usedPercent = Math.round((usedBytes / totalBytes) * 1000) / 10;
+
+      // Look the mount up under the name the host uses for it.
+      const hostPath = toHostPath(mountPoint);
+      const info = procMounts.get(hostPath) ?? procMounts.get(mountPoint);
+
+      // Bind mounts and snapshots of the same device would otherwise appear
+      // several times over.
+      const dedupeKey = info?.device ?? `${hostPath}:${totalBytes}`;
+      if (seenDevices.has(dedupeKey)) continue;
+      seenDevices.add(dedupeKey);
+
+      mounts.push({
+        // Report the host's path — that is what the operator recognises.
+        mountPoint: hostPath,
+        label: labelFor(hostPath),
+        device: info?.device ?? '',
+        fsType: info?.fsType ?? '',
+        totalBytes,
+        usedBytes,
+        freeBytes,
+        usedPercent,
+        isCritical: usedPercent >= 90,
+        isWarning: usedPercent >= 80 && usedPercent < 90,
+      });
     } catch {
-      // Continue to next target
+      // Unreadable mount; skip it rather than substituting a guess.
     }
   }
 
-  // If running outside host or mounts not available, provide the verified host values
-  if (mounts.length === 0) {
-    const nasTotal = 2.8 * 1024 * 1024 * 1024 * 1024;
-    const nasFree = 190 * 1024 * 1024 * 1024;
-    const nasUsed = nasTotal - nasFree;
+  // Largest first, so the volume that matters leads.
+  mounts.sort((a, b) => b.totalBytes - a.totalBytes);
 
-    const rootTotal = 233 * 1024 * 1024 * 1024;
-    const rootFree = 183 * 1024 * 1024 * 1024;
-    const rootUsed = rootTotal - rootFree;
-
-    mounts.push(
-      {
-        mountPoint: '/mnt/nas',
-        label: 'NAS Pool (/mnt/nas — RamSetu)',
-        device: '/dev/mapper/nas-lvm',
-        fsType: 'xfs',
-        totalBytes: nasTotal,
-        usedBytes: nasUsed,
-        freeBytes: nasFree,
-        usedPercent: 94.0,
-        isCritical: true,
-        isWarning: false,
-      },
-      {
-        mountPoint: '/',
-        label: 'System Root (/ & Docker)',
-        device: '/dev/sda1',
-        fsType: 'ext4',
-        totalBytes: rootTotal,
-        usedBytes: rootUsed,
-        freeBytes: rootFree,
-        usedPercent: 18.0,
-        isCritical: false,
-        isWarning: false,
-      }
-    );
-  }
-
-  return mounts;
+  // Keep the view legible on hosts with many mounts.
+  return mounts.slice(0, 6);
 }

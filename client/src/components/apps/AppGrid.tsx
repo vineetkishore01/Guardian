@@ -1,12 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import {
-  Search,
-  Layers,
-  Plus,
-  X,
-} from 'lucide-react';
+import { Search, LayoutGrid, Plus, X } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
-import { Input } from '../ui/Input';
+import { Input, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { AppCard } from './AppCard';
 import { EditAppModal } from './EditAppModal';
@@ -16,16 +11,31 @@ interface AppGridProps {
   containers?: ContainerItem[];
   customApps?: CustomAppBookmark[];
   settings?: DashboardSettings;
+  loading?: boolean;
   onSaveContainer: (name: string, updates: Partial<ContainerItem>) => Promise<boolean>;
   onSaveBookmark: (bookmark: CustomAppBookmark) => Promise<boolean>;
   onDeleteBookmark: (id: string) => Promise<boolean>;
   onOpenAddApp: () => void;
 }
 
+type SortKey = 'default' | 'name' | 'cpu' | 'mem';
+
+const PREFERRED_CATEGORY_ORDER = [
+  'Media',
+  'Downloads',
+  'Automation',
+  'Productivity',
+  'Development',
+  'AI & Tools',
+  'System',
+  'Utilities',
+];
+
 export function AppGrid({
   containers = [],
   customApps = [],
   settings,
+  loading = false,
   onSaveContainer,
   onSaveBookmark,
   onDeleteBookmark,
@@ -33,7 +43,7 @@ export function AppGrid({
 }: AppGridProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [sortBy, setSortBy] = useState<'default' | 'name' | 'cpu' | 'mem'>('default');
+  const [sortBy, setSortBy] = useState<SortKey>('default');
   const [editingItem, setEditingItem] = useState<{
     item: ContainerItem | CustomAppBookmark;
     isCustomBookmark: boolean;
@@ -41,202 +51,227 @@ export function AppGrid({
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Global '/' keyboard shortcut to focus search
+  // "/" focuses search; Escape inside the field clears and blurs it.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        e.key === '/' &&
-        !['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName || '') &&
-        !target?.isContentEditable
-      ) {
+      const target = e.target as HTMLElement | null;
+      const isTypingContext =
+        !!target &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable);
+
+      if (e.key === '/' && !isTypingContext && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Combine containers and custom bookmarks
-  const allItems = useMemo(() => {
-    const visibleContainers = containers.filter((c) => !c.hidden);
-    const containerEntries = visibleContainers.map((c) => ({
-      item: c,
-      isCustomBookmark: false,
-    }));
-    const bookmarkEntries = customApps.map((b) => ({
-      item: b,
-      isCustomBookmark: true,
-    }));
+  const allItems = useMemo(
+    () => [
+      ...containers.filter((c) => !c.hidden).map((c) => ({ item: c as ContainerItem | CustomAppBookmark, isCustomBookmark: false })),
+      ...customApps.map((b) => ({ item: b as ContainerItem | CustomAppBookmark, isCustomBookmark: true })),
+    ],
+    [containers, customApps]
+  );
 
-    return [...containerEntries, ...bookmarkEntries];
-  }, [containers, customApps]);
+  const hiddenCount = useMemo(() => containers.filter((c) => c.hidden).length, [containers]);
 
-  // Extract available categories & counts
   const categories = useMemo(() => {
-    const map: Record<string, number> = { all: allItems.length };
+    const counts: Record<string, number> = {};
     let pinnedCount = 0;
 
     for (const { item } of allItems) {
-      if (item.pinned) pinnedCount++;
+      if (item.pinned) pinnedCount += 1;
       const cat = item.category || 'General';
-      map[cat] = (map[cat] || 0) + 1;
+      counts[cat] = (counts[cat] || 0) + 1;
     }
 
     const tabs = [{ id: 'all', label: 'All', count: allItems.length }];
-    if (pinnedCount > 0) {
-      tabs.push({ id: 'pinned', label: 'Pinned', count: pinnedCount });
-    }
+    if (pinnedCount > 0) tabs.push({ id: 'pinned', label: 'Pinned', count: pinnedCount });
 
-    const standardCats = ['Media', 'Downloads', 'Automation', 'Productivity', 'AI & Tools', 'System', 'Development', 'Utilities'];
-    for (const cat of standardCats) {
-      if (map[cat]) {
-        tabs.push({ id: cat, label: cat, count: map[cat] });
-      }
-    }
+    const known = PREFERRED_CATEGORY_ORDER.filter((c) => counts[c]);
+    const rest = Object.keys(counts)
+      .filter((c) => !PREFERRED_CATEGORY_ORDER.includes(c))
+      .sort((a, b) => a.localeCompare(b));
 
-    for (const [cat, count] of Object.entries(map)) {
-      if (cat !== 'all' && !standardCats.includes(cat) && !tabs.find((t) => t.id === cat)) {
-        tabs.push({ id: cat, label: cat, count });
-      }
+    for (const cat of [...known, ...rest]) {
+      tabs.push({ id: cat, label: cat, count: counts[cat] });
     }
-
     return tabs;
   }, [allItems]);
 
-  // Filter & sort items
   const filteredItems = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+
     return allItems
       .filter(({ item }) => {
-        if (selectedCategory === 'pinned' && !item.pinned) return false;
-        if (selectedCategory !== 'all' && selectedCategory !== 'pinned') {
+        if (selectedCategory === 'pinned') {
+          if (!item.pinned) return false;
+        } else if (selectedCategory !== 'all') {
           if ((item.category || 'General') !== selectedCategory) return false;
         }
 
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase().trim();
-          const nameMatch = (item.name || '').toLowerCase().includes(q);
-          const catMatch = (item.category || '').toLowerCase().includes(q);
-          const descMatch = ((item as CustomAppBookmark).description || '').toLowerCase().includes(q);
-          const portMatch =
-            (item as ContainerItem).ports?.some(
-              (p) => String(p.publicPort || p.privatePort).includes(q)
-            ) ?? false;
+        if (!q) return true;
 
-          if (!nameMatch && !catMatch && !descMatch && !portMatch) return false;
-        }
+        const container = item as ContainerItem;
+        const haystack = [
+          item.name,
+          container.displayName,
+          item.category,
+          (item as CustomAppBookmark).description,
+          container.image,
+          ...(container.ports?.map((p) => String(p.publicPort || p.privatePort)) ?? []),
+        ];
 
-        return true;
+        return haystack.some((field) => field && String(field).toLowerCase().includes(q));
       })
       .sort((a, b) => {
-        if (a.item.pinned && !b.item.pinned) return -1;
-        if (!a.item.pinned && b.item.pinned) return 1;
+        // Pinned items lead in every sort mode.
+        if (a.item.pinned !== b.item.pinned) return a.item.pinned ? -1 : 1;
 
-        if (sortBy === 'name') {
-          return (a.item.name || '').localeCompare(b.item.name || '');
+        switch (sortBy) {
+          case 'name':
+            return (a.item.name || '').localeCompare(b.item.name || '');
+          case 'cpu':
+            return (
+              ((b.item as ContainerItem).cpuPercent || 0) -
+              ((a.item as ContainerItem).cpuPercent || 0)
+            );
+          case 'mem':
+            return (
+              ((b.item as ContainerItem).memoryBytes || 0) -
+              ((a.item as ContainerItem).memoryBytes || 0)
+            );
+          default:
+            return (a.item.name || '').localeCompare(b.item.name || '');
         }
-        if (sortBy === 'cpu') {
-          const cpuA = (a.item as ContainerItem).cpuPercent || 0;
-          const cpuB = (b.item as ContainerItem).cpuPercent || 0;
-          return cpuB - cpuA;
-        }
-        if (sortBy === 'mem') {
-          const memA = (a.item as ContainerItem).memoryBytes || 0;
-          const memB = (b.item as ContainerItem).memoryBytes || 0;
-          return memB - memA;
-        }
-
-        return 0;
       });
   }, [allItems, selectedCategory, searchQuery, sortBy]);
 
   return (
-    <div className="space-y-3.5">
-      {/* Category Tabs & Controls Header */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-        {/* Category Tabs */}
-        <div className="overflow-x-auto">
-          <Tabs
-            tabs={categories}
-            activeTab={selectedCategory}
-            onChange={setSelectedCategory}
-          />
-        </div>
+    <div className="space-y-3">
+      <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+        <Tabs tabs={categories} activeTab={selectedCategory} onChange={setSelectedCategory} />
 
-        {/* Search & Sort Controls */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <div className="relative flex-1 sm:w-56">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="relative flex-1 lg:w-60">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              aria-hidden="true"
+            />
             <Input
               ref={searchInputRef}
+              type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search apps... (/)"
-              className="pl-8 pr-7 h-8 text-xs bg-background"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSearchQuery('');
+                  e.currentTarget.blur();
+                }
+              }}
+              placeholder="Search apps"
+              aria-label="Search applications"
+              className="h-8 pl-8 pr-8"
             />
-            {searchQuery && (
+            {searchQuery ? (
               <button
+                type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
+            ) : (
+              <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 rounded border border-border px-1 font-mono text-2xs text-muted-foreground sm:block">
+                /
+              </kbd>
             )}
           </div>
 
-          <select
+          <Select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="h-8 rounded-md border border-input bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring font-medium cursor-pointer shadow-sm"
+            onChange={(e) => setSortBy(e.target.value as SortKey)}
+            aria-label="Sort applications"
           >
-            <option value="default">Sort: Default</option>
-            <option value="name">Sort: Name</option>
-            <option value="cpu">Sort: CPU %</option>
-            <option value="mem">Sort: RAM Usage</option>
-          </select>
+            <option value="default">Name</option>
+            <option value="name">Name (A–Z)</option>
+            <option value="cpu">CPU usage</option>
+            <option value="mem">Memory usage</option>
+          </Select>
         </div>
       </div>
 
-      {/* Grid of Apps */}
-      {filteredItems.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      {loading ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="surface p-3.5">
+              <div className="flex items-start gap-3">
+                <div className="skeleton h-10 w-10 shrink-0 rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <div className="skeleton h-3.5 w-2/3" />
+                  <div className="skeleton h-2.5 w-1/2" />
+                </div>
+              </div>
+              <div className="mt-4 skeleton h-2.5 w-full" />
+            </div>
+          ))}
+        </div>
+      ) : filteredItems.length > 0 ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredItems.map(({ item, isCustomBookmark }) => (
             <AppCard
-              key={isCustomBookmark ? (item as CustomAppBookmark).id : (item as ContainerItem).id}
+              key={
+                isCustomBookmark
+                  ? `bookmark:${(item as CustomAppBookmark).id}`
+                  : `container:${(item as ContainerItem).id}`
+              }
               item={item}
               isCustomBookmark={isCustomBookmark}
               settings={settings}
-              onEdit={(target) =>
-                setEditingItem({
-                  item: target,
-                  isCustomBookmark,
-                })
-              }
+              onEdit={(target) => setEditingItem({ item: target, isCustomBookmark })}
               onDeleteBookmark={onDeleteBookmark}
             />
           ))}
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-card p-10 text-center shadow-sm">
-          <Layers className="h-9 w-9 text-muted-foreground mx-auto mb-2.5 opacity-60" />
-          <h4 className="text-sm font-semibold text-foreground">No applications found</h4>
-          <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1 mb-3.5">
+        <div className="surface flex flex-col items-center px-6 py-12 text-center">
+          <LayoutGrid className="h-7 w-7 text-muted-foreground/50" aria-hidden="true" />
+          <h4 className="mt-3 text-sm font-medium text-foreground">
+            {searchQuery ? 'No matches' : 'Nothing here yet'}
+          </h4>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">
             {searchQuery
-              ? `No apps matching "${searchQuery}". Try a different search term or category.`
-              : 'No applications in this category yet.'}
+              ? `Nothing matches “${searchQuery}”.`
+              : 'Containers appear automatically. Add a bookmark for anything outside Docker.'}
           </p>
-          <Button variant="secondary" size="sm" onClick={onOpenAddApp} className="text-xs">
-            <Plus className="h-3.5 w-3.5 mr-1" />
-            Add Custom Bookmark
-          </Button>
+          <div className="mt-4 flex items-center gap-2">
+            {searchQuery && (
+              <Button variant="outline" size="sm" onClick={() => setSearchQuery('')}>
+                Clear search
+              </Button>
+            )}
+            <Button variant="secondary" size="sm" onClick={onOpenAddApp}>
+              <Plus className="h-3.5 w-3.5" />
+              Add bookmark
+            </Button>
+          </div>
         </div>
       )}
 
-      {/* Edit Container / App Modal */}
+      {hiddenCount > 0 && (
+        <p className="text-2xs text-muted-foreground">
+          {hiddenCount} container{hiddenCount === 1 ? '' : 's'} hidden from this view.
+        </p>
+      )}
+
       {editingItem && (
         <EditAppModal
-          open={!!editingItem}
+          open
           onOpenChange={(open) => !open && setEditingItem(null)}
           item={editingItem.item}
           isCustomBookmark={editingItem.isCustomBookmark}

@@ -2,41 +2,44 @@ import React from 'react';
 import { cn } from '../../lib/utils';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive' | 'success';
-  size?: 'sm' | 'md' | 'lg' | 'icon' | 'xs';
+  variant?: 'default' | 'brand' | 'secondary' | 'outline' | 'ghost' | 'destructive';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
 }
 
+const VARIANTS = {
+  default: 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm',
+  brand: 'bg-brand text-brand-foreground hover:bg-brand/90 shadow-sm',
+  secondary: 'bg-secondary text-secondary-foreground hover:bg-accent border border-border',
+  outline: 'border border-border bg-card text-foreground hover:bg-accent hover:border-border',
+  ghost: 'bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
+  destructive: 'bg-crit text-white hover:bg-crit/90 shadow-sm',
+};
+
+const SIZES = {
+  xs: 'h-7 px-2 text-2xs rounded-md gap-1',
+  sm: 'h-8 px-2.5 text-xs rounded-md gap-1.5',
+  md: 'h-9 px-3.5 text-xs rounded-md gap-1.5',
+  lg: 'h-10 px-5 text-sm rounded-lg gap-2',
+  icon: 'h-9 w-9 rounded-md p-0',
+  'icon-sm': 'h-8 w-8 rounded-md p-0',
+};
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'default', size = 'md', ...props }, ref) => {
-    const variantStyles = {
-      default: 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm active:scale-[0.98]',
-      secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border shadow-sm active:scale-[0.98]',
-      outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground text-foreground shadow-sm active:scale-[0.98]',
-      ghost: 'bg-transparent hover:bg-accent hover:text-accent-foreground text-muted-foreground hover:text-foreground',
-      destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm active:scale-[0.98]',
-      success: 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm active:scale-[0.98]',
-    };
-
-    const sizeStyles = {
-      xs: 'h-6 px-2 text-[11px] rounded',
-      sm: 'h-8 px-2.5 text-xs rounded-md',
-      md: 'h-9 px-3.5 text-xs sm:text-sm rounded-md',
-      lg: 'h-10 px-5 text-sm rounded-md',
-      icon: 'h-8 w-8 rounded-md p-0 flex items-center justify-center',
-    };
-
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          'inline-flex items-center justify-center font-medium transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 select-none',
-          variantStyles[variant],
-          sizeStyles[size],
-          className
-        )}
-        {...props}
-      />
-    );
-  }
+  ({ className, variant = 'default', size = 'md', type = 'button', ...props }, ref) => (
+    <button
+      ref={ref}
+      type={type}
+      className={cn(
+        'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-medium',
+        'transition-colors duration-150',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        'disabled:pointer-events-none disabled:opacity-50',
+        VARIANTS[variant],
+        SIZES[size],
+        className
+      )}
+      {...props}
+    />
+  )
 );
 Button.displayName = 'Button';
