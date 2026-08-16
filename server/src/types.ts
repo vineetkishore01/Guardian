@@ -141,6 +141,20 @@ export interface DockerSystemDf {
   volumesReclaimable: number;
   reclaimableTotalBytes: number;
   reclaimableFormatted: string;
+
+  /*
+   * Reclaimable space, split by what it actually takes to reclaim it.
+   *
+   * The prune button removes dangling images only, so reporting one combined
+   * figure meant the banner promised space the button could never free — and
+   * then kept asking after the user had already pruned everything it could.
+   */
+  /** Untagged layers. Safe to remove; this is what "Prune" frees. */
+  danglingBytes: number;
+  danglingCount: number;
+  /** Tagged images no container uses. Removing them means re-pulling. */
+  unusedTaggedBytes: number;
+  unusedTaggedCount: number;
 }
 
 export interface ServiceProbeResult {

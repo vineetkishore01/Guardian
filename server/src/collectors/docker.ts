@@ -136,6 +136,7 @@ interface RawDockerSystemDf {
     Size: number;
     SharedSize: number;
     Containers: number;
+    RepoTags?: string[];
   }>;
   Containers?: Array<{
     Id: string;
@@ -503,6 +504,10 @@ export async function fetchDockerSystemDf(): Promise<DockerSystemDf | null> {
     let imagesActive = 0;
     let imagesSize = 0;
     let imagesReclaimable = 0;
+    let danglingBytes = 0;
+    let danglingCount = 0;
+    let unusedTaggedBytes = 0;
+    let unusedTaggedCount = 0;
 
     if (df.Images) {
       imagesTotal = df.Images.length;
@@ -510,8 +515,24 @@ export async function fetchDockerSystemDf(): Promise<DockerSystemDf | null> {
         imagesSize += img.Size || 0;
         if (img.Containers > 0) {
           imagesActive += 1;
+          continue;
+        }
+
+        // Only the layers unique to this image are actually freed; the rest is
+        // shared with images that are still in use. Reporting raw Size
+        // overstates what a prune returns, sometimes by a lot.
+        const unique = Math.max(0, (img.Size || 0) - (img.SharedSize || 0));
+        imagesReclaimable += unique;
+
+        // No usable tag means dangling: an untagged layer left behind by a
+        // rebuild, and the only thing `prune` (dangling filter) removes.
+        const tags = (img.RepoTags || []).filter((t) => t && t !== '<none>:<none>');
+        if (tags.length === 0) {
+          danglingBytes += unique;
+          danglingCount += 1;
         } else {
-          imagesReclaimable += img.Size || 0;
+          unusedTaggedBytes += unique;
+          unusedTaggedCount += 1;
         }
       }
     }
@@ -557,6 +578,10 @@ export async function fetchDockerSystemDf(): Promise<DockerSystemDf | null> {
       volumesReclaimable,
       reclaimableTotalBytes,
       reclaimableFormatted: `${gb} GB`,
+      danglingBytes,
+      danglingCount,
+      unusedTaggedBytes,
+      unusedTaggedCount,
     };
   } catch {
     return getMockDockerDf();
@@ -692,16 +717,32 @@ export async function fetchContainerLogs(
   return demuxDockerLogs(buffer);
 }
 
-export async function pruneDockerImages(): Promise<{ spaceReclaimedBytes: number }> {
+/**
+ * Removes unused images.
+ *
+ * `dangling` (the default) deletes only untagged leftovers and is always safe.
+ * `all` also deletes tagged images that no container currently uses — which
+ * frees considerably more, at the cost of re-pulling them on next start. The
+ * caller has to ask for that explicitly.
+ */
+export async function pruneDockerImages(
+  scope: 'dangling' | 'all' = 'dangling'
+): Promise<{ spaceReclaimedBytes: number; scope: string }> {
   try {
     if (!isDockerSocketAvailable()) {
-      return { spaceReclaimedBytes: 16.4 * 1024 * 1024 * 1024 };
+      return { spaceReclaimedBytes: 0, scope };
     }
+
+    const filters =
+      scope === 'all'
+        ? encodeURIComponent(JSON.stringify({ dangling: ['false'] }))
+        : encodeURIComponent(JSON.stringify({ dangling: ['true'] }));
+
     const res = await dockerApiRequest<{ SpaceReclaimed?: number }>(
-      '/images/prune?filters=%7B%22dangling%22%3A%5B%22true%22%5D%7D',
+      `/images/prune?filters=${filters}`,
       'POST'
     );
-    return { spaceReclaimedBytes: res.SpaceReclaimed || 0 };
+    return { spaceReclaimedBytes: res.SpaceReclaimed || 0, scope };
   } catch (err) {
     throw new Error(`Failed to prune Docker images: ${(err as Error).message}`);
   }
@@ -921,5 +962,9 @@ function getMockDockerDf(): DockerSystemDf {
     volumesReclaimable: 0,
     reclaimableTotalBytes: 16.4 * 1024 * 1024 * 1024,
     reclaimableFormatted: '16.4 GB',
+    danglingBytes: 4.2 * 1024 * 1024 * 1024,
+    danglingCount: 9,
+    unusedTaggedBytes: 12.2 * 1024 * 1024 * 1024,
+    unusedTaggedCount: 22,
   };
 }

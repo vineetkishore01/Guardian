@@ -1,4 +1,5 @@
 import React, { useEffect, useId, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -53,6 +54,21 @@ export function Dialog({
   const titleId = useId();
   const descId = useId();
 
+  /*
+   * The setup effect must depend on `open` alone.
+   *
+   * It previously also listed `onOpenChange`, which callers almost always pass
+   * as an inline arrow — a new function identity on every render. Typing one
+   * character re-rendered the parent, changed that identity, and tore the
+   * effect down and back up: the cleanup called `restoreFocusRef.current
+   * .focus()`, yanking focus out of the field mid-word. Holding the callback in
+   * a ref keeps the handler current without making it a dependency.
+   */
+  const onOpenChangeRef = useRef(onOpenChange);
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  });
+
   useEffect(() => {
     if (!open) return;
 
@@ -62,7 +78,7 @@ export function Dialog({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onOpenChange(false);
+        onOpenChangeRef.current(false);
         return;
       }
 
@@ -87,12 +103,25 @@ export function Dialog({
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Move focus into the panel so keyboard users are not left behind it.
+    /*
+     * Move focus into the panel, preferring the first real field.
+     *
+     * The previous selector listed `button` alongside the fields, and
+     * querySelector returns the first match in *document* order — which is the
+     * close button in the header, not the input in the body. Opening a dialog
+     * therefore parked the caret on "Close" every time.
+     */
     const raf = requestAnimationFrame(() => {
-      const target = panelRef.current?.querySelector<HTMLElement>(
-        'input:not([type="checkbox"]), textarea, select, button'
+      const panel = panelRef.current;
+      if (!panel) return;
+
+      const field = panel.querySelector<HTMLElement>(
+        '[data-autofocus], input:not([type="checkbox"]):not([type="radio"]), textarea, select'
       );
-      target?.focus();
+      const fallback = panel.querySelector<HTMLElement>(
+        'button:not([data-dialog-close])'
+      );
+      (field ?? fallback ?? panel).focus();
     });
 
     return () => {
@@ -101,15 +130,26 @@ export function Dialog({
       unlockScroll();
       restoreFocusRef.current?.focus?.();
     };
-  }, [open, onOpenChange]);
+    // `open` only — see the note on onOpenChangeRef above.
+  }, [open]);
 
   if (!open) return null;
 
-  return (
+  /*
+   * Rendered through a portal, not in place.
+   *
+   * `position: fixed` resolves against the nearest ancestor with a transform,
+   * filter or backdrop-filter rather than the viewport. PowerMenu lives inside
+   * the sticky header, which uses `backdrop-blur-xl` — so this panel was being
+   * positioned against a 56px-tall header and rendered clipped off the top of
+   * the screen. Portalling to <body> makes placement independent of wherever a
+   * dialog happens to be mounted.
+   */
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div
         className="absolute inset-0 animate-fade-in bg-background/70 backdrop-blur-sm"
-        onClick={() => onOpenChange(false)}
+        onClick={() => onOpenChangeRef.current(false)}
         aria-hidden="true"
       />
 
@@ -139,6 +179,7 @@ export function Dialog({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
+            data-dialog-close
             aria-label="Close dialog"
             className="-mr-1 shrink-0 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -154,6 +195,7 @@ export function Dialog({
           </footer>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -156,9 +156,11 @@ export function useLiveTelemetry() {
     [mutate]
   );
 
-  const pruneDocker = useCallback(async (): Promise<{ spaceReclaimedBytes: number } | null> => {
+  const pruneDocker = useCallback(async (
+    scope: 'dangling' | 'all' = 'dangling'
+  ): Promise<{ spaceReclaimedBytes: number } | null> => {
     try {
-      const res = await postJson('/api/docker/prune');
+      const res = await postJson('/api/docker/prune', { scope });
       if (!res.ok) throw new Error(`Failed to prune images (HTTP ${res.status})`);
       const result = await res.json();
       await fetchStatus();

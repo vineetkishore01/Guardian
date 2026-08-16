@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Power, RotateCcw, AlertTriangle, Loader2, Info } from 'lucide-react';
+import { Power, RotateCcw, AlertTriangle, Loader2, Info, Copy, Check } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -28,6 +28,7 @@ export function PowerMenu() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issued, setIssued] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const loadCapability = useCallback(async () => {
     try {
@@ -48,6 +49,19 @@ export function PowerMenu() {
     setConfirmation('');
     setError(null);
     setIssued(false);
+    setCopied(false);
+  };
+
+  const copyPhrase = async () => {
+    const phrase = capability?.confirmationPhrase ?? '';
+    try {
+      await navigator.clipboard.writeText(phrase);
+    } catch {
+      // Clipboard access needs a secure context; the text is selectable either way.
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   const submit = async () => {
@@ -165,10 +179,35 @@ export function PowerMenu() {
 
             <div className="space-y-1.5">
               <label htmlFor="power-confirm" className="text-xs font-medium text-foreground">
-                Type <span className="font-mono text-crit">{phrase}</span> to confirm
+                Type this hostname to confirm
               </label>
+
+              {/*
+                The hostname sits outside the <label>. Inside one, a click is
+                forwarded to the associated input, so dragging to select the
+                text just moved the caret into the field instead. `select-all`
+                makes a single click grab the whole hostname.
+              */}
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                <code className="flex-1 select-all font-mono text-xs text-crit">{phrase}</code>
+                <button
+                  type="button"
+                  onClick={copyPhrase}
+                  title="Copy hostname"
+                  aria-label="Copy hostname"
+                  className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5 text-ok" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+
               <Input
                 id="power-confirm"
+                data-autofocus
                 value={confirmation}
                 onChange={(e) => setConfirmation(e.target.value)}
                 onKeyDown={(e) => {
@@ -180,7 +219,7 @@ export function PowerMenu() {
                 className={cn('font-mono', confirmed && 'border-crit')}
               />
               <p className="text-2xs text-muted-foreground">
-                Typing the hostname is required so this cannot fire by accident.
+                Confirming by hostname is what stops this firing by accident.
               </p>
             </div>
 

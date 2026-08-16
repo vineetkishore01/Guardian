@@ -300,9 +300,14 @@ app.delete('/api/custom-apps/:id', (req: Request, res: Response) => {
   return res.json(deleteCustomApp(String(req.params.id)));
 });
 
-app.post('/api/docker/prune', async (_req: Request, res: Response, next: NextFunction) => {
+app.post('/api/docker/prune', async (req: Request, res: Response, next: NextFunction) => {
+  // `all` also removes tagged images no container uses; the client must ask.
+  const scope = req.body?.scope === 'all' ? 'all' : 'dangling';
   try {
-    const result = await pruneDockerImages();
+    const result = await pruneDockerImages(scope);
+    logger.info('docker', `Pruned images (${scope})`, {
+      reclaimedBytes: result.spaceReclaimedBytes,
+    });
     // Reclaimed space changes the disk picture; refresh the snapshot.
     await sampleOnce();
     res.json({ success: true, ...result });

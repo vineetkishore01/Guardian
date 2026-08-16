@@ -17,7 +17,7 @@ interface HeaderProps {
   onChangeHostMode: (mode: DashboardSettings['defaultHostMode']) => void;
 }
 
-const RECLAIM_THRESHOLD = 1024 * 1024 * 1024; // 1 GB
+const RECLAIM_THRESHOLD = 512 * 1024 * 1024; // 512 MB of dangling layers
 
 export function Header({
   host,
@@ -59,8 +59,9 @@ export function Header({
       : []),
   ];
 
-  const showReclaim =
-    dockerDf && dockerDf.reclaimableTotalBytes > RECLAIM_THRESHOLD;
+  // Mirrors the banner: only advertise space the prune button can actually free.
+  const reclaimable = dockerDf?.danglingBytes ?? 0;
+  const showReclaim = reclaimable > RECLAIM_THRESHOLD;
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-xl">
@@ -142,7 +143,7 @@ export function Header({
               title="Reclaimable Docker storage — jump to cleanup"
             >
               <Trash2 className="h-3 w-3" aria-hidden="true" />
-              {formatBytes(dockerDf!.reclaimableTotalBytes)}
+              {formatBytes(reclaimable)}
             </a>
           )}
 
