@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HostTelemetry, CpuInfo, MemoryInfo, ThermalSensor, NetworkInterface } from '../types.js';
+import { HostTelemetry, MemoryInfo, ThermalSensor, NetworkInterface } from '../types.js';
 
 const PROC_DIR = process.env.HOST_PROC || '/proc';
 const SYS_DIR = process.env.HOST_SYS || '/sys';
@@ -18,7 +18,8 @@ interface CpuStat {
 }
 
 let lastCpuStat: CpuStat | null = null;
-let lastNetStats: Record<string, { rx: number; tx: number; time: number }> = {};
+const lastCoreStats = new Map<number, CpuStat>();
+const lastNetStats: Record<string, { rx: number; tx: number; time: number }> = {};
 
 function safeReadFile(filePath: string): string | null {
   try {
@@ -31,10 +32,41 @@ function safeReadFile(filePath: string): string | null {
   return null;
 }
 
+function parseStatLine(parts: number[]): CpuStat {
+  return {
+    user: parts[0] || 0,
+    nice: parts[1] || 0,
+    system: parts[2] || 0,
+    idle: parts[3] || 0,
+    iowait: parts[4] || 0,
+    irq: parts[5] || 0,
+    softirq: parts[6] || 0,
+    steal: parts[7] || 0,
+  };
+}
+
+function calcStatDelta(prev: CpuStat, curr: CpuStat): number {
+  const prevIdle = prev.idle + prev.iowait;
+  const currIdle = curr.idle + curr.iowait;
+
+  const prevNonIdle = prev.user + prev.nice + prev.system + prev.irq + prev.softirq + prev.steal;
+  const currNonIdle = curr.user + curr.nice + curr.system + curr.irq + curr.softirq + curr.steal;
+
+  const prevTotal = prevIdle + prevNonIdle;
+  const currTotal = currIdle + currNonIdle;
+
+  const totalDiff = currTotal - prevTotal;
+  const idleDiff = currIdle - prevIdle;
+
+  if (totalDiff > 0) {
+    return Math.max(0, Math.min(100, Math.round(((totalDiff - idleDiff) / totalDiff) * 1000) / 10));
+  }
+  return 0;
+}
+
 function parseProcStat(): { totalUsage: number; cores: number[] } {
   const statContent = safeReadFile(path.join(PROC_DIR, 'stat'));
   if (!statContent) {
-    // Fallback for macOS dev or unavailable /proc
     const load = os.loadavg();
     const cpuCount = os.cpus().length || 8;
     const approxUsage = Math.min(100, Math.round((load[0] / cpuCount) * 100));
@@ -51,55 +83,32 @@ function parseProcStat(): { totalUsage: number; cores: number[] } {
   }
 
   const parts = cpuLine.trim().split(/\s+/).slice(1).map(Number);
-  const currentStat: CpuStat = {
-    user: parts[0] || 0,
-    nice: parts[1] || 0,
-    system: parts[2] || 0,
-    idle: parts[3] || 0,
-    iowait: parts[4] || 0,
-    irq: parts[5] || 0,
-    softirq: parts[6] || 0,
-    steal: parts[7] || 0,
-  };
+  const currentStat = parseStatLine(parts);
 
   let usagePercent = 0;
   if (lastCpuStat) {
-    const prevIdle = lastCpuStat.idle + lastCpuStat.iowait;
-    const currIdle = currentStat.idle + currentStat.iowait;
-
-    const prevNonIdle =
-      lastCpuStat.user +
-      lastCpuStat.nice +
-      lastCpuStat.system +
-      lastCpuStat.irq +
-      lastCpuStat.softirq +
-      lastCpuStat.steal;
-    const currNonIdle =
-      currentStat.user +
-      currentStat.nice +
-      currentStat.system +
-      currentStat.irq +
-      currentStat.softirq +
-      currentStat.steal;
-
-    const prevTotal = prevIdle + prevNonIdle;
-    const currTotal = currIdle + currNonIdle;
-
-    const totalDiff = currTotal - prevTotal;
-    const idleDiff = currIdle - prevIdle;
-
-    if (totalDiff > 0) {
-      usagePercent = Math.max(0, Math.min(100, Math.round(((totalDiff - idleDiff) / totalDiff) * 1000) / 10));
-    }
+    usagePercent = calcStatDelta(lastCpuStat, currentStat);
   }
-
   lastCpuStat = currentStat;
 
-  // Read per-core line if present
+  // Read per-core lines (cpu0, cpu1, ...)
   const coreLines = lines.filter((l) => /^cpu\d+/.test(l));
-  const cores = coreLines.map(() => usagePercent); // Core breakdown approximation or same
+  const cores: number[] = [];
 
-  return { totalUsage: usagePercent, cores };
+  coreLines.forEach((l, idx) => {
+    const cParts = l.trim().split(/\s+/).slice(1).map(Number);
+    const currCoreStat = parseStatLine(cParts);
+    const prevCoreStat = lastCoreStats.get(idx);
+
+    if (prevCoreStat) {
+      cores.push(calcStatDelta(prevCoreStat, currCoreStat));
+    } else {
+      cores.push(usagePercent);
+    }
+    lastCoreStats.set(idx, currCoreStat);
+  });
+
+  return { totalUsage: usagePercent, cores: cores.length > 0 ? cores : [usagePercent] };
 }
 
 function parseProcMeminfo(): MemoryInfo {
@@ -126,7 +135,7 @@ function parseProcMeminfo(): MemoryInfo {
   for (const line of memContent.split('\n')) {
     const match = line.match(/^([A-Za-z0-9_()]+):\s+(\d+)\s*kB/);
     if (match) {
-      map[match[1]] = parseInt(match[2], 10) * 1024; // convert kB to bytes
+      map[match[1]] = parseInt(match[2], 10) * 1024;
     }
   }
 
@@ -182,12 +191,12 @@ function parseUptime(): { seconds: number; formatted: string } {
   const hours = Math.floor((sec % 86400) / 3600);
   const minutes = Math.floor((sec % 3600) / 60);
 
-  let formatted = '';
-  if (days > 0) formatted += `${days}d `;
-  if (hours > 0 || days > 0) formatted += `${hours}h `;
-  formatted += `${minutes}m`;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0 || days > 0) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
 
-  return { seconds: sec, formatted: formatted.trim() };
+  return { seconds: sec, formatted: parts.join(' ') || '0m' };
 }
 
 function parseThermals(): ThermalSensor[] {
@@ -224,7 +233,6 @@ function parseThermals(): ThermalSensor[] {
   }
 
   if (sensors.length === 0) {
-    // Fallback for non-Linux / mock dev
     sensors.push(
       { name: 'thermal_zone0', label: 'x86_pkg_temp', tempC: 47.0, isCritical: false },
       { name: 'thermal_zone1', label: 'pch_cannonlake', tempC: 46.0, isCritical: false },
@@ -246,7 +254,6 @@ function parseNetwork(): NetworkInterface[] {
       const match = line.match(/^\s*([a-zA-Z0-9_-]+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)/);
       if (match) {
         const iface = match[1];
-        // Focus on key interfaces: eno1, tailscale0, eth0, docker0
         if (iface.startsWith('lo') || iface.startsWith('veth') || iface.startsWith('br-')) continue;
 
         const rxTotal = parseInt(match[2], 10);
@@ -258,8 +265,10 @@ function parseNetwork(): NetworkInterface[] {
         const prev = lastNetStats[iface];
         if (prev && now > prev.time) {
           const deltaSec = (now - prev.time) / 1000;
-          rxRate = Math.max(0, Math.round((rxTotal - prev.rx) / deltaSec));
-          txRate = Math.max(0, Math.round((txTotal - prev.tx) / deltaSec));
+          if (deltaSec > 0) {
+            rxRate = Math.max(0, Math.round((rxTotal - prev.rx) / deltaSec));
+            txRate = Math.max(0, Math.round((txTotal - prev.tx) / deltaSec));
+          }
         }
 
         lastNetStats[iface] = { rx: rxTotal, tx: txTotal, time: now };
@@ -276,7 +285,6 @@ function parseNetwork(): NetworkInterface[] {
   }
 
   if (results.length === 0) {
-    // Dev mock
     results.push(
       { name: 'eno1', rxBytesPerSec: 142000, txBytesPerSec: 85000, rxTotalBytes: 524288000, txTotalBytes: 314572800 },
       { name: 'tailscale0', rxBytesPerSec: 18000, txBytesPerSec: 12000, rxTotalBytes: 104857600, txTotalBytes: 62914560 },

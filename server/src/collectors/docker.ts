@@ -18,6 +18,7 @@ function dockerApiRequest<T>(path: string, method: string = 'GET', postData?: un
       return reject(new Error('Docker socket not available'));
     }
 
+    let isSettled = false;
     const payload = postData ? JSON.stringify(postData) : null;
     const options: http.RequestOptions = {
       socketPath: DOCKER_SOCKET,
@@ -41,23 +42,29 @@ function dockerApiRequest<T>(path: string, method: string = 'GET', postData?: un
         data += chunk;
       });
       res.on('end', () => {
+        if (isSettled) return;
+        isSettled = true;
         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
           try {
             resolve(JSON.parse(data) as T);
-          } catch (e) {
+          } catch {
             resolve(data as unknown as T);
           }
         } else {
-          reject(new Error(`Docker API error (${res.statusCode}): ${data}`));
+          reject(new Error(`Docker API error (${res.statusCode}): ${data.slice(0, 100)}`));
         }
       });
     });
 
     req.on('error', (err) => {
+      if (isSettled) return;
+      isSettled = true;
       reject(err);
     });
 
-    req.setTimeout(5000, () => {
+    req.setTimeout(4000, () => {
+      if (isSettled) return;
+      isSettled = true;
       req.destroy();
       reject(new Error('Docker API request timed out'));
     });
@@ -85,6 +92,31 @@ interface RawDockerContainer {
   }>;
 }
 
+interface RawDockerStats {
+  cpu_stats?: {
+    cpu_usage?: {
+      total_usage?: number;
+      percpu_usage?: number[];
+    };
+    system_cpu_usage?: number;
+    online_cpus?: number;
+  };
+  precpu_stats?: {
+    cpu_usage?: {
+      total_usage?: number;
+    };
+    system_cpu_usage?: number;
+  };
+  memory_stats?: {
+    usage?: number;
+    limit?: number;
+    stats?: {
+      cache?: number;
+      inactive_file?: number;
+    };
+  };
+}
+
 interface RawDockerSystemDf {
   Images?: Array<{
     Id: string;
@@ -106,6 +138,64 @@ interface RawDockerSystemDf {
   }>;
 }
 
+// Container stats cache (30s TTL to prevent overwhelming docker daemon)
+interface CachedStat {
+  cpuPercent: number;
+  memoryBytes: number;
+  memoryLimitBytes: number;
+  timestamp: number;
+}
+const containerStatsCache = new Map<string, CachedStat>();
+
+async function fetchContainerStat(id: string): Promise<CachedStat | null> {
+  const cached = containerStatsCache.get(id);
+  const now = Date.now();
+  if (cached && now - cached.timestamp < 30000) {
+    return cached;
+  }
+
+  try {
+    const raw = await dockerApiRequest<RawDockerStats>(`/containers/${id}/stats?stream=false`);
+    let cpuPercent = 0;
+    if (raw.cpu_stats && raw.precpu_stats) {
+      const cpuDelta =
+        (raw.cpu_stats.cpu_usage?.total_usage || 0) -
+        (raw.precpu_stats.cpu_usage?.total_usage || 0);
+      const systemDelta =
+        (raw.cpu_stats.system_cpu_usage || 0) -
+        (raw.precpu_stats.system_cpu_usage || 0);
+      const onlineCpus =
+        raw.cpu_stats.online_cpus ||
+        raw.cpu_stats.cpu_usage?.percpu_usage?.length ||
+        1;
+
+      if (systemDelta > 0 && cpuDelta > 0) {
+        cpuPercent = Math.round(((cpuDelta / systemDelta) * onlineCpus * 100) * 10) / 10;
+      }
+    }
+
+    let memoryBytes = 0;
+    let memoryLimitBytes = 0;
+    if (raw.memory_stats) {
+      const rawUsage = raw.memory_stats.usage || 0;
+      const cache = raw.memory_stats.stats?.cache || raw.memory_stats.stats?.inactive_file || 0;
+      memoryBytes = Math.max(0, rawUsage - cache);
+      memoryLimitBytes = raw.memory_stats.limit || 0;
+    }
+
+    const stat: CachedStat = {
+      cpuPercent,
+      memoryBytes,
+      memoryLimitBytes,
+      timestamp: now,
+    };
+    containerStatsCache.set(id, stat);
+    return stat;
+  } catch {
+    return cached || null;
+  }
+}
+
 export async function fetchContainers(): Promise<ContainerItem[]> {
   try {
     if (!isDockerSocketAvailable()) {
@@ -113,9 +203,25 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
     }
 
     const raw = await dockerApiRequest<RawDockerContainer[]>('/containers/json?all=1');
+    const runningContainers = raw.filter((c) => (c.State || '').toLowerCase() === 'running');
+
+    // Fetch stats for running containers in parallel (cached 30s)
+    const statsPromises = runningContainers.map((c) =>
+      fetchContainerStat(c.Id).then((stat) => ({ id: c.Id.slice(0, 12), fullId: c.Id, stat }))
+    );
+    const statsResults = await Promise.allSettled(statsPromises);
+    const statsMap = new Map<string, CachedStat>();
+
+    for (const res of statsResults) {
+      if (res.status === 'fulfilled' && res.value.stat) {
+        statsMap.set(res.value.id, res.value.stat);
+      }
+    }
+
     return raw.map((c) => {
-      const rawName = (c.Names && c.Names[0]) ? c.Names[0].replace(/^\//, '') : c.Id.slice(0, 12);
-      
+      const rawName = c.Names && c.Names[0] ? c.Names[0].replace(/^\//, '') : c.Id.slice(0, 12);
+      const shortId = c.Id.slice(0, 12);
+
       let health: 'healthy' | 'unhealthy' | 'starting' | 'none' = 'none';
       const statusLower = (c.Status || '').toLowerCase();
       if (statusLower.includes('(healthy)')) {
@@ -134,17 +240,23 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
       }));
 
       const state = (c.State || 'running').toLowerCase() as ContainerItem['state'];
+      const liveStat = statsMap.get(shortId);
 
       return {
-        id: c.Id.slice(0, 12),
+        id: shortId,
         name: rawName,
         image: c.Image,
-        state: ['running', 'exited', 'restarting', 'paused', 'dead', 'created'].includes(state) ? state : 'running',
+        state: ['running', 'exited', 'restarting', 'paused', 'dead', 'created'].includes(state)
+          ? state
+          : 'running',
         status: c.Status || 'Up',
         health,
         created: c.Created,
         composeProject: c.Labels?.['com.docker.compose.project'],
         ports,
+        cpuPercent: liveStat?.cpuPercent,
+        memoryBytes: liveStat?.memoryBytes,
+        memoryLimitBytes: liveStat?.memoryLimitBytes,
       };
     });
   } catch (err) {
@@ -184,7 +296,7 @@ export async function fetchDockerSystemDf(): Promise<DockerSystemDf | null> {
       containersTotal = df.Containers.length;
       containersActive = df.Containers.length;
       for (const c of df.Containers) {
-        containersSize += (c.SizeRw || 0);
+        containersSize += c.SizeRw || 0;
       }
     }
 
@@ -229,7 +341,10 @@ export async function pruneDockerImages(): Promise<{ spaceReclaimedBytes: number
     if (!isDockerSocketAvailable()) {
       return { spaceReclaimedBytes: 16.4 * 1024 * 1024 * 1024 };
     }
-    const res = await dockerApiRequest<{ SpaceReclaimed?: number }>('/images/prune?filters=%7B%22dangling%22%3A%5B%22true%22%5D%7D', 'POST');
+    const res = await dockerApiRequest<{ SpaceReclaimed?: number }>(
+      '/images/prune?filters=%7B%22dangling%22%3A%5B%22true%22%5D%7D',
+      'POST'
+    );
     return { spaceReclaimedBytes: res.SpaceReclaimed || 0 };
   } catch (err) {
     throw new Error(`Failed to prune Docker images: ${(err as Error).message}`);

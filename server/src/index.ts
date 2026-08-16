@@ -142,7 +142,7 @@ app.post('/api/config/settings', (req: Request, res: Response) => {
 });
 
 app.post('/api/containers/:name/custom', (req: Request, res: Response) => {
-  const name = String(req.params.name);
+  const name = decodeURIComponent(String(req.params.name));
   const updated = updateContainerConfig(name, req.body);
   res.json(updated);
 });
@@ -157,7 +157,7 @@ app.post('/api/custom-apps', (req: Request, res: Response) => {
 });
 
 app.delete('/api/custom-apps/:id', (req: Request, res: Response) => {
-  const id = String(req.params.id);
+  const id = decodeURIComponent(String(req.params.id));
   const updated = deleteCustomApp(id);
   res.json(updated);
 });
@@ -194,16 +194,18 @@ if (fs.existsSync(clientDistPath)) {
   });
 }
 
-// Background polling loop for live push
+// Background loop: always keep history and telemetry warm
 let isPolling = false;
 setInterval(async () => {
-  if (sseClients.size === 0 || isPolling) return;
+  if (isPolling) return;
   isPolling = true;
   try {
     const state = await assembleFullState();
-    broadcastSSE(state);
+    if (sseClients.size > 0) {
+      broadcastSSE(state);
+    }
   } catch (err) {
-    console.error('[Polling Error]:', (err as Error).message);
+    console.error('[Telemetry Polling Error]:', (err as Error).message);
   } finally {
     isPolling = false;
   }

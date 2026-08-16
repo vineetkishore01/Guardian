@@ -32,7 +32,9 @@ export function AppCard({
     ? resolveBookmarkUrl(bookmark, settings)
     : container
     ? resolveContainerUrl(container, settings)
-    : '#';
+    : null;
+
+  const hasValidUrl = targetUrl && targetUrl !== '#' && !targetUrl.endsWith('/#');
 
   const name = container?.displayName || item.name;
   const iconUrl = item.iconUrl;
@@ -46,8 +48,10 @@ export function AppCard({
   const mem = container?.memoryBytes;
 
   const handleLaunch = () => {
-    if (targetUrl && targetUrl !== '#') {
+    if (hasValidUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      onEdit(item);
     }
   };
 
@@ -64,8 +68,8 @@ export function AppCard({
   return (
     <div
       onClick={handleLaunch}
-      className={`glass-card relative flex flex-col justify-between rounded-2xl p-4 sm:p-5 cursor-pointer group transition-all duration-200 border border-border select-none ${
-        isPinned ? 'ring-2 ring-sky-500/20' : ''
+      className={`glass-card relative flex flex-col justify-between rounded-xl p-4 sm:p-5 cursor-pointer group transition-all duration-200 border border-border select-none ${
+        isPinned ? 'ring-1 ring-sky-500/30' : ''
       }`}
     >
       {/* Top Bar: Category, Pin, Edit Action */}
@@ -88,22 +92,24 @@ export function AppCard({
               e.stopPropagation();
               onEdit(item);
             }}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
             title="Edit icon and launch URL"
           >
             <Settings className="h-3.5 w-3.5" />
           </button>
 
           {/* Direct Launch Icon */}
-          <div className="p-1.5 rounded-lg text-muted-foreground group-hover:text-sky-600 dark:group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
-            <ExternalLink className="h-3.5 w-3.5" />
-          </div>
+          {hasValidUrl && (
+            <div className="p-1.5 rounded-md text-muted-foreground group-hover:text-sky-600 dark:group-hover:text-sky-400 group-hover:bg-sky-500/10 transition-all">
+              <ExternalLink className="h-3.5 w-3.5" />
+            </div>
+          )}
         </div>
       </div>
 
       {/* Center: App Icon & Name */}
       <div className="flex items-center gap-3.5 my-1">
-        <div className="relative flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-border p-2 shadow-inner group-hover:scale-105 transition-transform">
+        <div className="relative flex-shrink-0 flex items-center justify-center h-11 w-11 rounded-xl bg-secondary/80 border border-border p-2 shadow-inner group-hover:scale-105 transition-transform">
           {iconUrl && !imgError ? (
             <img
               src={iconUrl}
@@ -113,7 +119,7 @@ export function AppCard({
               loading="lazy"
             />
           ) : (
-            <span className="text-base font-bold text-sky-600 dark:text-sky-300 uppercase">
+            <span className="text-sm font-bold text-sky-600 dark:text-sky-400 uppercase">
               {name.slice(0, 2)}
             </span>
           )}
@@ -121,14 +127,14 @@ export function AppCard({
           {/* Live Health Status Dot */}
           {!isCustomBookmark && (
             <span
-              className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-background ${
+              className={`absolute -bottom-1 -right-1 h-2.5 w-2.5 rounded-full border-2 border-card ${
                 health === 'healthy'
                   ? 'bg-emerald-500 ring-2 ring-emerald-500/20'
                   : health === 'unhealthy'
                   ? 'bg-rose-500 ring-2 ring-rose-500/20'
                   : state === 'running'
                   ? 'bg-sky-500'
-                  : 'bg-slate-400'
+                  : 'bg-zinc-400'
               }`}
               title={`Health: ${health}, State: ${state}`}
             />
@@ -136,7 +142,7 @@ export function AppCard({
         </div>
 
         <div className="flex-1 min-w-0">
-          <h4 className="text-sm font-bold text-foreground truncate group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
+          <h4 className="text-sm font-semibold text-foreground truncate group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">
             {name}
           </h4>
           <p className="text-xs text-muted-foreground truncate font-mono">
@@ -147,14 +153,14 @@ export function AppCard({
             ) : bookmark ? (
               <span className="text-muted-foreground">{bookmark.url}</span>
             ) : (
-              <span className="text-muted-foreground/70">Internal network</span>
+              <span className="text-muted-foreground/60">Internal network</span>
             )}
           </p>
         </div>
       </div>
 
       {/* Bottom: Stats & Ports Bar */}
-      <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+      <div className="mt-3.5 pt-2.5 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
         {!isCustomBookmark && container ? (
           <div className="flex items-center gap-2 font-mono text-[11px]">
             {cpu !== undefined && (
@@ -183,9 +189,15 @@ export function AppCard({
           </div>
         )}
 
-        <span className="text-[10px] text-sky-600 dark:text-sky-400 font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
-          Open ↗
-        </span>
+        {hasValidUrl ? (
+          <span className="text-[10px] text-sky-600 dark:text-sky-400 font-medium opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+            Open ↗
+          </span>
+        ) : (
+          <span className="text-[10px] text-muted-foreground font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+            Configure ⚙
+          </span>
+        )}
       </div>
     </div>
   );

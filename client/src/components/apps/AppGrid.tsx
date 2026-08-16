@@ -44,7 +44,12 @@ export function AppGrid({
   // Global '/' keyboard shortcut to focus search
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === '/' && document.activeElement !== searchInputRef.current && document.activeElement?.tagName !== 'INPUT') {
+      const target = e.target as HTMLElement;
+      if (
+        e.key === '/' &&
+        !['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName || '') &&
+        !target?.isContentEditable
+      ) {
         e.preventDefault();
         searchInputRef.current?.focus();
       }

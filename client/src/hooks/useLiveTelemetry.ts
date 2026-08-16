@@ -12,7 +12,11 @@ export function useLiveTelemetry() {
   const [loading, setLoading] = useState<boolean>(true);
   const [connected, setConnected] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const connectedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -36,7 +40,6 @@ export function useLiveTelemetry() {
     let es: EventSource | null = null;
     try {
       es = new EventSource('/api/live');
-      eventSourceRef.current = es;
 
       es.onopen = () => {
         setConnected(true);
@@ -48,6 +51,7 @@ export function useLiveTelemetry() {
           const payload: FullDashboardState = JSON.parse(event.data);
           setData(payload);
           setLoading(false);
+          setConnected(true);
         } catch (e) {
           console.error('[SSE Parse Error]:', e);
         }
@@ -55,15 +59,14 @@ export function useLiveTelemetry() {
 
       es.onerror = () => {
         setConnected(false);
-        // Fallback polling if SSE drops
       };
     } catch (e) {
       console.warn('[SSE Init Failed]:', e);
     }
 
-    // Interval fallback in case SSE is disconnected
+    // Interval fallback when SSE is disconnected
     const interval = setInterval(() => {
-      if (!connected) {
+      if (!connectedRef.current) {
         fetchStatus();
       }
     }, 15000);
@@ -74,7 +77,7 @@ export function useLiveTelemetry() {
         es.close();
       }
     };
-  }, [fetchStatus, connected]);
+  }, [fetchStatus]);
 
   const updateContainer = async (
     name: string,
