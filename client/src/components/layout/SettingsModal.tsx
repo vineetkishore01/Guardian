@@ -1,18 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Settings,
-  Server,
   Network,
-  Save,
   Download,
-  Upload,
-  RefreshCw,
-  Info,
 } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { Badge } from '../ui/Badge';
 import { DashboardSettings } from '../../types/dashboard';
 
 interface SettingsModalProps {
@@ -85,18 +78,18 @@ export function SettingsModal({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Guardian Dashboard Settings"
-      description="Configure network IP resolution, refresh rates, and data persistence"
+      title="Dashboard Settings"
+      description="Configure network IP resolution, refresh intervals, and backup preferences"
       maxWidth="md"
     >
       <form onSubmit={handleSave} className="space-y-4">
         {/* Host Resolution Mode */}
         <div className="space-y-2">
-          <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-            <Network className="h-3.5 w-3.5 text-cyan-400" />
-            Default App Launch IP Mode
+          <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Network className="h-3.5 w-3.5 text-sky-500" />
+            App Launch Target IP
           </label>
-          <p className="text-[11px] text-slate-400">
+          <p className="text-xs text-muted-foreground">
             Select how Guardian builds the clickable application URLs when opening cards:
           </p>
 
@@ -111,23 +104,23 @@ export function SettingsModal({
                 key={opt.id}
                 type="button"
                 onClick={() => setHostMode(opt.id as any)}
-                className={`p-2.5 rounded-xl text-left border transition-all ${
+                className={`p-2.5 rounded-lg text-left border transition-all ${
                   hostMode === opt.id
-                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200'
-                    : 'bg-slate-950/60 border-white/10 text-slate-400 hover:text-slate-200'
+                    ? 'bg-secondary text-foreground font-semibold border-border ring-1 ring-ring shadow-sm'
+                    : 'bg-card border-border text-muted-foreground hover:text-foreground hover:bg-accent/40'
                 }`}
               >
-                <div className="text-xs font-bold text-slate-200">{opt.title}</div>
-                <div className="text-[10px] text-slate-400 mt-0.5">{opt.desc}</div>
+                <div className="text-xs font-semibold text-foreground">{opt.title}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</div>
               </button>
             ))}
           </div>
         </div>
 
         {/* IP Addresses */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">LAN Host IP</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-foreground">LAN Host IP</label>
             <Input
               value={lanIp}
               onChange={(e) => setLanIp(e.target.value)}
@@ -135,8 +128,8 @@ export function SettingsModal({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">Tailscale IP</label>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-foreground">Tailscale IP</label>
             <Input
               value={tailscaleIp}
               onChange={(e) => setTailscaleIp(e.target.value)}
@@ -146,8 +139,8 @@ export function SettingsModal({
         </div>
 
         {hostMode === 'custom' && (
-          <div className="space-y-1.5 pt-1">
-            <label className="text-xs font-semibold text-slate-300">Custom Domain / Host</label>
+          <div className="space-y-1 pt-1">
+            <label className="text-xs font-medium text-foreground">Custom Domain / Host</label>
             <Input
               value={customHostUrl}
               onChange={(e) => setCustomHostUrl(e.target.value)}
@@ -157,27 +150,27 @@ export function SettingsModal({
         )}
 
         {/* Polling Interval */}
-        <div className="space-y-1.5 pt-2 border-t border-white/10">
-          <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-            <span>Telemetry Polling Interval</span>
-            <span className="text-[11px] text-cyan-400 font-mono">{refreshInterval} seconds</span>
-          </label>
+        <div className="space-y-1 pt-2 border-t border-border">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-foreground">Telemetry Polling Interval</label>
+            <span className="text-[11px] text-muted-foreground font-mono">{refreshInterval} seconds</span>
+          </div>
           <select
             value={refreshInterval}
             onChange={(e) => setRefreshInterval(Number(e.target.value))}
-            className="w-full h-9 rounded-lg border border-white/10 bg-slate-950/60 px-3 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+            className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs sm:text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring shadow-sm"
           >
-            <option value="15">15 seconds (Recommended — ultra-low CPU)</option>
+            <option value="15">15 seconds (Recommended — smooth & ultra-low CPU)</option>
             <option value="30">30 seconds (Minimal resource mode)</option>
-            <option value="60">60 seconds (Battery/minimal)</option>
+            <option value="60">60 seconds (Gentle mode)</option>
           </select>
         </div>
 
         {/* Backup / Export */}
-        <div className="p-3 rounded-xl bg-slate-950/60 border border-white/10 flex items-center justify-between">
+        <div className="p-3 rounded-lg bg-secondary/50 border border-border flex items-center justify-between">
           <div>
-            <div className="text-xs font-bold text-slate-200">Backup Configuration</div>
-            <div className="text-[10px] text-slate-400">
+            <div className="text-xs font-medium text-foreground">Backup Configuration</div>
+            <div className="text-[11px] text-muted-foreground">
               Export custom icon mappings & bookmarks JSON
             </div>
           </div>
@@ -194,7 +187,7 @@ export function SettingsModal({
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center justify-end gap-2 pt-4 border-t border-white/10">
+        <div className="flex items-center justify-end gap-2 pt-4 border-t border-border">
           <Button variant="outline" size="sm" type="button" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

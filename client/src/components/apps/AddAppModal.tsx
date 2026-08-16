@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Sparkles, Globe, Link, Image as ImageIcon } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -70,30 +70,30 @@ export function AddAppModal({ open, onOpenChange, onAddBookmark }: AddAppModalPr
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Preset quick picker toggle */}
-        <div className="flex items-center justify-between p-2.5 rounded-xl bg-cyan-950/30 border border-cyan-500/20">
-          <span className="text-xs text-cyan-200">Want to quickly populate a popular homelab app?</span>
+        <div className="flex items-center justify-between p-2.5 rounded-lg bg-secondary/50 border border-border">
+          <span className="text-xs text-foreground font-medium">Quickly select a homelab app preset:</span>
           <Button
             type="button"
-            variant="default"
+            variant="outline"
             size="xs"
             onClick={() => setShowPresets(!showPresets)}
-            className="flex items-center gap-1 bg-cyan-600 hover:bg-cyan-500"
+            className="flex items-center gap-1"
           >
-            <Sparkles className="h-3 w-3" />
-            {showPresets ? 'Hide Presets' : 'Choose Preset'}
+            <Sparkles className="h-3 w-3 text-sky-500" />
+            {showPresets ? 'Hide' : 'Presets'}
           </Button>
         </div>
 
         {showPresets && (
-          <div className="p-3 rounded-xl bg-slate-950/80 border border-white/10 max-h-48 overflow-y-auto grid grid-cols-2 gap-2">
+          <div className="p-2.5 rounded-lg bg-card border border-border max-h-48 overflow-y-auto grid grid-cols-2 gap-1.5 shadow-inner">
             {ICON_PRESETS.slice(0, 18).map((preset) => (
               <button
                 key={preset.id}
                 type="button"
                 onClick={() => handleSelectPreset(preset)}
-                className="flex items-center gap-2 p-1.5 rounded-lg bg-slate-900 hover:bg-cyan-500/20 border border-white/5 text-left text-xs text-slate-200 truncate transition-colors"
+                className="flex items-center gap-2 p-1.5 rounded-md hover:bg-secondary border border-transparent hover:border-border text-left text-xs text-foreground truncate transition-colors"
               >
-                <img src={preset.iconUrl} alt={preset.name} className="h-5 w-5 object-contain" />
+                <img src={preset.iconUrl} alt={preset.name} className="h-4 w-4 object-contain" />
                 <span className="truncate">{preset.name}</span>
               </button>
             ))}
@@ -101,8 +101,8 @@ export function AddAppModal({ open, onOpenChange, onAddBookmark }: AddAppModalPr
         )}
 
         {/* Name */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300">App Name *</label>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">App Name *</label>
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -112,11 +112,11 @@ export function AddAppModal({ open, onOpenChange, onAddBookmark }: AddAppModalPr
         </div>
 
         {/* URL */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-            <span>Target URL *</span>
-            <span className="text-[10px] text-slate-500 font-mono">Supports {'{host}'}</span>
-          </label>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-foreground">Target URL *</label>
+            <span className="text-[10px] text-muted-foreground font-mono">Supports {'{host}'}</span>
+          </div>
           <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -126,28 +126,28 @@ export function AddAppModal({ open, onOpenChange, onAddBookmark }: AddAppModalPr
         </div>
 
         {/* Icon URL */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300">Icon URL (SVG / PNG)</label>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Icon URL (SVG / PNG)</label>
           <Input
             value={iconUrl}
             onChange={(e) => setIconUrl(e.target.value)}
-            placeholder="https://... or choose preset above"
+            placeholder="https://... or select preset above"
           />
         </div>
 
         {/* Category */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300">Category</label>
-          <div className="flex flex-wrap gap-1.5">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Category</label>
+          <div className="flex flex-wrap gap-1">
             {CATEGORIES.map((cat) => (
               <button
                 key={cat}
                 type="button"
                 onClick={() => setCategory(cat)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
                   category === cat
-                    ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-500/50'
-                    : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 border border-white/5'
+                    ? 'bg-primary text-primary-foreground font-semibold shadow-sm'
+                    : 'bg-secondary text-muted-foreground hover:text-foreground border border-border'
                 }`}
               >
                 {cat}
@@ -157,8 +157,8 @@ export function AddAppModal({ open, onOpenChange, onAddBookmark }: AddAppModalPr
         </div>
 
         {/* Description */}
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-300">Description (Optional)</label>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-foreground">Description (Optional)</label>
           <Input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -168,18 +168,18 @@ export function AddAppModal({ open, onOpenChange, onAddBookmark }: AddAppModalPr
 
         {/* Pin to top */}
         <div className="pt-1">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-foreground">
             <input
               type="checkbox"
               checked={pinned}
               onChange={(e) => setPinned(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-cyan-500 focus:ring-cyan-500"
+              className="h-4 w-4 rounded border-input text-primary focus:ring-ring"
             />
             <span>Pin to top of the dashboard</span>
           </label>
         </div>
 
-        <div className="flex items-center justify-end gap-2 pt-4 border-t border-white/10">
+        <div className="flex items-center justify-end gap-2 pt-4 border-t border-border">
           <Button variant="outline" size="sm" type="button" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

@@ -50,27 +50,27 @@ export function Dialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/75 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-black/40 dark:bg-black/70 backdrop-blur-sm transition-opacity"
         onClick={() => onOpenChange(false)}
       />
 
       {/* Modal Dialog */}
       <div
         className={cn(
-          'relative z-50 w-full rounded-2xl border border-white/15 bg-slate-900/95 p-6 shadow-2xl backdrop-blur-xl animate-fade-in text-slate-100 max-h-[90vh] flex flex-col',
+          'relative z-50 w-full rounded-xl border border-border bg-card p-6 text-card-foreground shadow-2xl backdrop-blur-xl transition-all max-h-[90vh] flex flex-col',
           maxWidthStyles[maxWidth]
         )}
       >
-        <div className="flex items-start justify-between pb-4 border-b border-white/10">
+        <div className="flex items-start justify-between pb-4 border-b border-border">
           <div>
-            <h2 className="text-lg font-bold text-slate-100">{title}</h2>
-            {description && <p className="text-xs text-slate-400 mt-0.5">{description}</p>}
+            <h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
+            {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
           </div>
           <Button
             variant="ghost"
             size="icon"
             onClick={() => onOpenChange(false)}
-            className="h-7 w-7 text-slate-400 hover:text-white"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </Button>

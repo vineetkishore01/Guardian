@@ -1,14 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
-  LayoutGrid,
-  List,
-  Pin,
-  Sparkles,
   Layers,
-  ArrowUpDown,
-  Filter,
   Plus,
+  X,
 } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
 import { Input } from '../ui/Input';
@@ -44,6 +39,20 @@ export function AppGrid({
     isCustomBookmark: boolean;
   } | null>(null);
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Global '/' keyboard shortcut to focus search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && document.activeElement !== searchInputRef.current && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Combine containers and custom bookmarks
   const allItems = useMemo(() => {
     const visibleContainers = containers.filter((c) => !c.hidden);
@@ -70,7 +79,7 @@ export function AppGrid({
       map[cat] = (map[cat] || 0) + 1;
     }
 
-    const tabs = [{ id: 'all', label: 'All Apps', count: allItems.length }];
+    const tabs = [{ id: 'all', label: 'All', count: allItems.length }];
     if (pinnedCount > 0) {
       tabs.push({ id: 'pinned', label: 'Pinned', count: pinnedCount });
     }
@@ -82,7 +91,6 @@ export function AppGrid({
       }
     }
 
-    // Any other custom categories
     for (const [cat, count] of Object.entries(map)) {
       if (cat !== 'all' && !standardCats.includes(cat) && !tabs.find((t) => t.id === cat)) {
         tabs.push({ id: cat, label: cat, count });
@@ -96,13 +104,11 @@ export function AppGrid({
   const filteredItems = useMemo(() => {
     return allItems
       .filter(({ item }) => {
-        // Category filter
         if (selectedCategory === 'pinned' && !item.pinned) return false;
         if (selectedCategory !== 'all' && selectedCategory !== 'pinned') {
           if ((item.category || 'General') !== selectedCategory) return false;
         }
 
-        // Search query
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase().trim();
           const nameMatch = (item.name || '').toLowerCase().includes(q);
@@ -119,7 +125,6 @@ export function AppGrid({
         return true;
       })
       .sort((a, b) => {
-        // Pinned always first
         if (a.item.pinned && !b.item.pinned) return -1;
         if (!a.item.pinned && b.item.pinned) return 1;
 
@@ -142,11 +147,11 @@ export function AppGrid({
   }, [allItems, selectedCategory, searchQuery, sortBy]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3.5">
       {/* Category Tabs & Controls Header */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
         {/* Category Tabs */}
-        <div className="flex-1 overflow-x-auto">
+        <div className="overflow-x-auto">
           <Tabs
             tabs={categories}
             activeTab={selectedCategory}
@@ -156,20 +161,29 @@ export function AppGrid({
 
         {/* Search & Sort Controls */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          <div className="relative flex-1 sm:w-48">
-            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+          <div className="relative flex-1 sm:w-56">
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search apps, ports..."
-              className="pl-8 h-8 text-xs bg-slate-900/80 border-white/10"
+              placeholder="Search apps... (/)"
+              className="pl-8 pr-7 h-8 text-xs bg-background"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as any)}
-            className="h-8 rounded-lg border border-white/10 bg-slate-900/80 px-2.5 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500 font-medium cursor-pointer"
+            className="h-8 rounded-md border border-input bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring font-medium cursor-pointer shadow-sm"
           >
             <option value="default">Sort: Default</option>
             <option value="name">Sort: Name</option>
@@ -181,7 +195,7 @@ export function AppGrid({
 
       {/* Grid of Apps */}
       {filteredItems.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3.5 sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {filteredItems.map(({ item, isCustomBookmark }) => (
             <AppCard
               key={isCustomBookmark ? (item as CustomAppBookmark).id : (item as ContainerItem).id}
@@ -199,10 +213,10 @@ export function AppGrid({
           ))}
         </div>
       ) : (
-        <div className="rounded-2xl border border-white/10 bg-slate-900/40 p-12 text-center backdrop-blur-sm">
-          <Layers className="h-10 w-10 text-slate-500 mx-auto mb-3" />
-          <h4 className="text-base font-bold text-slate-200">No applications found</h4>
-          <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1 mb-4">
+        <div className="rounded-xl border border-border bg-card p-10 text-center shadow-sm">
+          <Layers className="h-9 w-9 text-muted-foreground mx-auto mb-2.5 opacity-60" />
+          <h4 className="text-sm font-semibold text-foreground">No applications found</h4>
+          <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1 mb-3.5">
             {searchQuery
               ? `No apps matching "${searchQuery}". Try a different search term or category.`
               : 'No applications in this category yet.'}
