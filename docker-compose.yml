@@ -1,0 +1,39 @@
+services:
+  guardian:
+    image: guardian:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: guardian
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      # Docker Daemon socket (auto-discovery & stats)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Host telemetry
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      # Storage monitoring
+      - /:/host/root:ro
+      - /mnt/nas:/host/mnt/nas:ro
+      # Persistent icons and URLs config
+      - guardian_data:/data
+    environment:
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ROOT=/host/root
+      - HOST_NAS=/host/mnt/nas
+      - SERVER_IP=192.168.0.26
+      - TAILSCALE_IP=100.94.238.9
+      - PORT=3001
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.50'
+
+volumes:
+  guardian_data:
+    name: guardian_data

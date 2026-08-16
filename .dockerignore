@@ -1,0 +1,10 @@
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+server/dist
+.git
+.gitignore
+data/*.json
+*.md
+.DS_Store
