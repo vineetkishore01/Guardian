@@ -7,6 +7,9 @@ on:
     paths-ignore:
       - '**.md'
       - '.gitignore'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -14,7 +17,50 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # Typecheck and build before anything can be tagged `latest`. Previously the
+  # publish job was the only job, so a commit that failed to compile would still
+  # be built and pushed as the current release.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # `npm ci` needs a lockfile; the root workspace has none, so fall back to
+      # `npm install` where it is absent.
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck client
+        working-directory: client
+        run: npx tsc --noEmit
+
+      - name: Typecheck server
+        working-directory: server
+        run: npx tsc --noEmit
+
+      - name: Build client
+        working-directory: client
+        run: npm run build
+
+      - name: Build server
+        working-directory: server
+        run: npm run build
+
   build-and-push:
+    needs: verify
+    # Never publish from a pull request; only main and manual dispatch.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,16 +68,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -39,7 +85,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -47,7 +93,7 @@ jobs:
             type=sha,format=short
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
