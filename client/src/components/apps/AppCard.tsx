@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
-import { resolveContainerUrl, resolveBookmarkUrl, formatBytes, cn } from '../../lib/utils';
+import {
+  resolveContainerUrl,
+  resolveBookmarkUrl,
+  formatBytes,
+  cn,
+  containerIssues,
+  containerSeverity,
+} from '../../lib/utils';
 
 interface AppCardProps {
   item: ContainerItem | CustomAppBookmark;
@@ -59,6 +66,10 @@ export function AppCard({
       STATE_PRESENTATION[container.state] ?? { dot: 'bg-muted-foreground', label: container.status }
     : null;
 
+  const issues = container ? containerIssues(container) : [];
+  const severity = container ? containerSeverity(container) : 'ok';
+  const worstIssue = issues[0];
+
   const portLabel = container?.ports?.length
     ? container.ports
         .map((p) => p.publicPort || p.privatePort)
@@ -92,7 +103,9 @@ export function AppCard({
       className={cn(
         'surface surface-interactive group flex select-none flex-col p-3.5',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        item.pinned && 'border-brand/30'
+        item.pinned && !worstIssue && 'border-brand/30',
+        severity === 'crit' && 'border-crit/50',
+        severity === 'warn' && 'border-warn/40'
       )}
     >
       <div className="flex items-start gap-3">
@@ -183,18 +196,38 @@ export function AppCard({
           <p className="mt-0.5 flex items-center gap-1.5 truncate text-2xs text-muted-foreground">
             {item.pinned && <Pin className="h-2.5 w-2.5 shrink-0 text-brand" aria-hidden="true" />}
             <span className="truncate">{category}</span>
-            {portLabel && (
+            {portLabel ? (
               <>
                 <span aria-hidden="true">·</span>
                 <span className="truncate font-mono">:{portLabel}</span>
               </>
-            )}
+            ) : container?.networkParent ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="truncate" title={`Shares the network namespace of ${container.networkParent}`}>
+                  via {container.networkParent}
+                </span>
+              </>
+            ) : null}
           </p>
         </div>
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-2.5 text-2xs text-muted-foreground">
-        {status ? (
+        {worstIssue ? (
+          <span
+            className={cn(
+              'flex min-w-0 items-center gap-1.5 font-medium',
+              worstIssue.severity === 'crit' ? 'text-crit' : 'text-warn'
+            )}
+            title={issues.map((i) => i.detail).join('\n\n')}
+          >
+            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              {issues.map((i) => i.label).join(' · ')}
+            </span>
+          </span>
+        ) : status ? (
           <span className="flex min-w-0 items-center gap-1.5">
             <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', status.dot)} aria-hidden="true" />
             <span className="truncate">{status.label}</span>

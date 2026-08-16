@@ -174,3 +174,98 @@ export function resolveBookmarkUrl(
 ): string {
   return expandTemplate(app.url || '', settings);
 }
+
+/* ------------------------------------------------------------------ *
+ * Container attention
+ *
+ * One place decides whether a container needs looking at, so the grid, the
+ * ordering and the summary line can never disagree about what "a problem" is.
+ * ------------------------------------------------------------------ */
+
+
+export interface ContainerIssue {
+  severity: Severity;
+  /** Short label for the card. */
+  label: string;
+  /** Fuller explanation for a tooltip. */
+  detail: string;
+}
+
+/** Restarts above this in a container's lifetime read as a loop, not a blip. */
+const RESTART_LOOP_THRESHOLD = 3;
+
+export function containerIssues(c: ContainerItem): ContainerIssue[] {
+  const issues: ContainerIssue[] = [];
+
+  if (c.oomKilled) {
+    issues.push({
+      severity: 'crit',
+      label: 'OOM killed',
+      detail: 'The kernel killed this container for exceeding its memory limit.',
+    });
+  }
+
+  if (c.health === 'unhealthy') {
+    const lastProbe = c.healthLog?.[c.healthLog.length - 1];
+    issues.push({
+      severity: 'crit',
+      label: 'Unhealthy',
+      detail: lastProbe?.output
+        ? `Healthcheck failing: ${lastProbe.output}`
+        : 'The container healthcheck is failing.',
+    });
+  }
+
+  if (c.state === 'restarting') {
+    issues.push({ severity: 'crit', label: 'Restarting', detail: 'Container is restarting now.' });
+  }
+
+  if (c.state === 'dead') {
+    issues.push({ severity: 'crit', label: 'Dead', detail: 'Container is in a dead state.' });
+  }
+
+  // A restart-looping container reports "running" between restarts, which is
+  // why this has to be derived from the count rather than the state.
+  if ((c.restartCount ?? 0) >= RESTART_LOOP_THRESHOLD) {
+    issues.push({
+      severity: c.state === 'running' ? 'warn' : 'crit',
+      label: `${c.restartCount} restarts`,
+      detail: `Restarted ${c.restartCount} times. A container that keeps restarting still reports "running" in between.`,
+    });
+  }
+
+  if (c.state === 'exited' && (c.exitCode ?? 0) !== 0) {
+    issues.push({
+      severity: 'warn',
+      label: `Exit ${c.exitCode}`,
+      detail: c.stateError || `Container exited with code ${c.exitCode}.`,
+    });
+  }
+
+  if (c.memoryLimitBytes && c.memoryBytes && c.memoryLimitBytes > 0) {
+    const share = (c.memoryBytes / c.memoryLimitBytes) * 100;
+    if (share >= 90) {
+      issues.push({
+        severity: 'warn',
+        label: `${share.toFixed(0)}% of limit`,
+        detail: `Using ${share.toFixed(0)}% of its memory limit — the next spike may trigger an OOM kill.`,
+      });
+    }
+  }
+
+  return issues;
+}
+
+const SEVERITY_RANK: Record<Severity, number> = { crit: 0, warn: 1, ok: 2 };
+
+/** Worst issue severity, or `ok` when there is nothing to report. */
+export function containerSeverity(c: ContainerItem): Severity {
+  return containerIssues(c).reduce<Severity>(
+    (worst, issue) => (SEVERITY_RANK[issue.severity] < SEVERITY_RANK[worst] ? issue.severity : worst),
+    'ok'
+  );
+}
+
+export function severityRank(severity: Severity): number {
+  return SEVERITY_RANK[severity];
+}

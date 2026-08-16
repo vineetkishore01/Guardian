@@ -64,7 +64,31 @@ function calcStatDelta(prev: CpuStat, curr: CpuStat): number {
   return 0;
 }
 
-function parseProcStat(): { totalUsage: number; cores: number[] } {
+/**
+ * Share of the interval spent in a single CPU state.
+ *
+ * `calcStatDelta` deliberately folds iowait into idle, which is the right
+ * convention for "utilisation" but hides the one number that matters on a
+ * disk-bound machine: a host can sit at 3% CPU while every task is blocked on a
+ * spinning disk. iowait is already parsed, so reporting it costs nothing.
+ */
+function statePercent(prev: CpuStat, curr: CpuStat, key: 'iowait' | 'steal'): number {
+  const total = (s: CpuStat) =>
+    s.user + s.nice + s.system + s.idle + s.iowait + s.irq + s.softirq + s.steal;
+
+  const totalDiff = total(curr) - total(prev);
+  if (totalDiff <= 0) return 0;
+
+  const stateDiff = curr[key] - prev[key];
+  return Math.max(0, Math.round((stateDiff / totalDiff) * 1000) / 10);
+}
+
+function parseProcStat(): {
+  totalUsage: number;
+  cores: number[];
+  iowaitPercent: number;
+  stealPercent: number;
+} {
   const statContent = safeReadFile(path.join(PROC_DIR, 'stat'));
   if (!statContent) {
     const load = os.loadavg();
@@ -73,21 +97,27 @@ function parseProcStat(): { totalUsage: number; cores: number[] } {
     return {
       totalUsage: approxUsage,
       cores: Array(cpuCount).fill(approxUsage),
+      iowaitPercent: 0,
+      stealPercent: 0,
     };
   }
 
   const lines = statContent.split('\n');
   const cpuLine = lines.find((l) => l.startsWith('cpu '));
   if (!cpuLine) {
-    return { totalUsage: 0, cores: [] };
+    return { totalUsage: 0, cores: [], iowaitPercent: 0, stealPercent: 0 };
   }
 
   const parts = cpuLine.trim().split(/\s+/).slice(1).map(Number);
   const currentStat = parseStatLine(parts);
 
   let usagePercent = 0;
+  let iowaitPercent = 0;
+  let stealPercent = 0;
   if (lastCpuStat) {
     usagePercent = calcStatDelta(lastCpuStat, currentStat);
+    iowaitPercent = statePercent(lastCpuStat, currentStat, 'iowait');
+    stealPercent = statePercent(lastCpuStat, currentStat, 'steal');
   }
   lastCpuStat = currentStat;
 
@@ -108,7 +138,12 @@ function parseProcStat(): { totalUsage: number; cores: number[] } {
     lastCoreStats.set(idx, currCoreStat);
   });
 
-  return { totalUsage: usagePercent, cores: cores.length > 0 ? cores : [usagePercent] };
+  return {
+    totalUsage: usagePercent,
+    cores: cores.length > 0 ? cores : [usagePercent],
+    iowaitPercent,
+    stealPercent,
+  };
 }
 
 function parseProcMeminfo(): MemoryInfo {
@@ -201,7 +236,67 @@ function parseUptime(): { seconds: number; formatted: string } {
   return { seconds: sec, formatted: parts.join(' ') || '0m' };
 }
 
-function parseThermals(): ThermalSensor[] {
+/**
+ * Sensors exposed under /sys/class/hwmon.
+ *
+ * This is where the good readings live. `/sys/class/thermal` on a typical Intel
+ * laptop-turned-server offers only `acpitz` and a chipset zone, while hwmon
+ * carries the `coretemp` driver — per-core temperatures plus the package
+ * reading, which is the one worth alerting on. Each chip directory holds a
+ * `name`, then `tempN_input` in millidegrees with an optional `tempN_label`.
+ */
+function parseHwmon(): ThermalSensor[] {
+  const sensors: ThermalSensor[] = [];
+  const hwmonDir = path.join(SYS_DIR, 'class/hwmon');
+
+  try {
+    if (!fs.existsSync(hwmonDir)) return sensors;
+
+    for (const chip of fs.readdirSync(hwmonDir)) {
+      const chipPath = path.join(hwmonDir, chip);
+      const chipName = safeReadFile(path.join(chipPath, 'name'))?.trim() || chip;
+
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(chipPath);
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const match = entry.match(/^temp(\d+)_input$/);
+        if (!match) continue;
+
+        const raw = safeReadFile(path.join(chipPath, entry))?.trim();
+        if (!raw) continue;
+
+        const tempC = Math.round((parseInt(raw, 10) / 1000) * 10) / 10;
+        if (!Number.isFinite(tempC) || tempC <= 0 || tempC >= 150) continue;
+
+        const label =
+          safeReadFile(path.join(chipPath, `temp${match[1]}_label`))?.trim() ||
+          `${chipName} ${match[1]}`;
+
+        // A "critical" trip point, when the chip publishes one.
+        const critRaw = safeReadFile(path.join(chipPath, `temp${match[1]}_crit`))?.trim();
+        const critC = critRaw ? parseInt(critRaw, 10) / 1000 : 0;
+
+        sensors.push({
+          name: `${chip}/temp${match[1]}`,
+          label: chipName === label ? label : `${chipName} ${label}`,
+          tempC,
+          isCritical: critC > 0 ? tempC >= critC * 0.95 : tempC >= 85,
+        });
+      }
+    }
+  } catch {
+    // Unreadable hwmon tree; the thermal-zone reader below still applies.
+  }
+
+  return sensors;
+}
+
+function parseThermalZones(): ThermalSensor[] {
   const sensors: ThermalSensor[] = [];
   const thermalDir = path.join(SYS_DIR, 'class/thermal');
 
@@ -239,6 +334,33 @@ function parseThermals(): ThermalSensor[] {
   // this returned a fixed 47°C "x86_pkg_temp", which looked exactly like a real
   // measurement.
   return sensors;
+}
+
+/**
+ * Every temperature the host will report, hwmon first.
+ *
+ * hwmon is preferred because it carries the CPU package and per-core readings;
+ * thermal zones fill in anything hwmon does not cover. Duplicate labels are
+ * dropped so a chip exposed through both trees is listed once.
+ */
+function parseThermals(): ThermalSensor[] {
+  const combined = [...parseHwmon(), ...parseThermalZones()];
+
+  const seen = new Set<string>();
+  const unique: ThermalSensor[] = [];
+  for (const sensor of combined) {
+    const key = sensor.label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(sensor);
+  }
+
+  // Package/CPU sensors lead, so the primary reading is picked first.
+  return unique.sort((a, b) => {
+    const rank = (s: ThermalSensor) =>
+      /package|pkg|tctl|tdie/i.test(s.label) ? 0 : /core|cpu/i.test(s.label) ? 1 : 2;
+    return rank(a) - rank(b);
+  });
 }
 
 function parseNetwork(): NetworkInterface[] {
@@ -305,7 +427,7 @@ export function isHostDataLive(): boolean {
 }
 
 export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
-  const { totalUsage, cores } = parseProcStat();
+  const { totalUsage, cores, iowaitPercent, stealPercent } = parseProcStat();
   const memory = parseProcMeminfo();
   const loadAvg = parseLoadAvg();
   const uptime = parseUptime();
@@ -326,6 +448,8 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
       cores,
       model: cpuModel,
       loadAvg,
+      iowaitPercent,
+      stealPercent,
     },
     memory,
     thermals,

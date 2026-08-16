@@ -3,6 +3,10 @@ export interface CpuInfo {
   cores: number[];
   model: string;
   loadAvg: [number, number, number]; // 1m, 5m, 15m
+  /** Time blocked on disk. On an I/O-bound host this is the number that matters. */
+  iowaitPercent: number;
+  /** Time stolen by the hypervisor. Non-zero only on virtualised hosts. */
+  stealPercent: number;
 }
 
 export interface MemoryInfo {
@@ -67,6 +71,12 @@ export interface ContainerPort {
   ip?: string;
 }
 
+export interface HealthProbe {
+  start: number;
+  exitCode: number;
+  output: string;
+}
+
 export interface ContainerItem {
   id: string;
   name: string;
@@ -80,6 +90,23 @@ export interface ContainerItem {
   cpuPercent?: number;
   memoryBytes?: number;
   memoryLimitBytes?: number;
+  /** Age of the stats sample in ms; large values mean the stream is stalled. */
+  statAgeMs?: number;
+
+  /* From /containers/{id}/json — the diagnostic half of a container's state. */
+  restartCount?: number;
+  exitCode?: number;
+  /** Last error string the daemon recorded for this container. */
+  stateError?: string;
+  oomKilled?: boolean;
+  startedAt?: number;
+  finishedAt?: number;
+  /** Recent healthcheck probes, newest last. */
+  healthLog?: HealthProbe[];
+  /** e.g. "bridge", "host", or "container:gluetun" for a shared namespace. */
+  networkMode?: string;
+  /** Resolved when networkMode points at another container. */
+  networkParent?: string;
   // Custom metadata from store
   displayName?: string;
   iconUrl?: string;

@@ -12,11 +12,13 @@ import {
   pruneDockerImages,
   fetchContainerLogs,
   isDockerLive,
+  stopContainerStatsStreams,
+  containerStreamCount,
 } from './collectors/docker.js';
 import { telemetryHistory, METRIC_KEYS } from './history.js';
 import { logger, installCrashHandlers } from './logger.js';
 import { getPowerCapability, executePowerAction, PowerError } from './power.js';
-import { runServiceProbes } from './prober.js';
+import { runServiceProbes, buildProbeTargets } from './prober.js';
 import {
   loadUserConfig,
   updateContainerConfig,
@@ -80,10 +82,9 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
   const host: HostTelemetry = { ...hostBase, disks };
 
   const config = loadUserConfig();
-  const [rawContainers, dockerDf, probes] = await Promise.all([
+  const [rawContainers, dockerDf] = await Promise.all([
     fetchContainers(),
     fetchDockerSystemDf(),
-    runServiceProbes(config.settings.lanIp),
   ]);
 
   const containers: ContainerItem[] = rawContainers.map((c) => {
@@ -102,10 +103,17 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     };
   });
 
+  // Probe targets are derived from the containers we just discovered, so a new
+  // service is covered the moment it starts.
+  const probes = await runServiceProbes(
+    config.settings.lanIp,
+    buildProbeTargets(containers, config.customApps)
+  );
+
   const primaryThermal =
     host.thermals.find((t) => /pkg|package|cpu|tctl|core/i.test(t.label)) || host.thermals[0];
   const primaryNet =
-    host.network.find((n) => !/^(docker|veth|br-|virbr|lo|tun|tap|wg)/.test(n.name)) ||
+    host.network.find((n) => !/^(docker|veth|br-|virbr|lo|tun|tap|wg|tailscale|zt|ham|nebula|cni|flannel|kube|dummy|ifb|sit|gre)/.test(n.name)) ||
     host.network[0];
 
   // Exactly one history point per sample, at a known cadence.
@@ -210,6 +218,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
     ok: true,
     uptimeSeconds: Math.round(process.uptime()),
     sseClients: sseClients.size,
+    containerStatStreams: containerStreamCount(),
     lastSampleAt: latestState?.host.timestamp ?? null,
   });
 });
@@ -305,7 +314,11 @@ app.post('/api/docker/prune', async (_req: Request, res: Response, next: NextFun
 app.post('/api/probes/refresh', async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const config = loadUserConfig();
-    const probes = await runServiceProbes(config.settings.lanIp, true);
+    const probes = await runServiceProbes(
+      config.settings.lanIp,
+      buildProbeTargets(latestState?.containers ?? [], config.customApps),
+      true
+    );
     if (latestState) latestState = { ...latestState, probes };
     res.json(probes);
   } catch (err) {
@@ -512,6 +525,7 @@ function shutdown(signal: string) {
   // Close open history buckets and flush both stores before exiting, so a
   // restart does not lose the current interval.
   telemetryHistory.flushAndSave();
+  stopContainerStatsStreams();
   logger.save();
 
   for (const client of sseClients) {

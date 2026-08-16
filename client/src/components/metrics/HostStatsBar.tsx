@@ -1,8 +1,9 @@
 import React from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { MetricCard, MetricCardSkeleton } from './MetricCard';
+import { CoreStrip } from './CoreStrip';
 import { HostTelemetry, HistoryPoint, MetricKey } from '../../types/dashboard';
-import { formatBytes, formatRate, severityFor } from '../../lib/utils';
+import { formatBytes, formatRate, severityFor, severityTextClass, cn } from '../../lib/utils';
 
 interface HostStatsBarProps {
   host?: HostTelemetry;
@@ -11,8 +12,16 @@ interface HostStatsBarProps {
   onOpenMetric?: (metric: MetricKey) => void;
 }
 
-/** Interfaces that are never the machine's primary link. */
-const VIRTUAL_IFACE = /^(docker|veth|br-|virbr|lo|tun|tap|wg)/;
+/*
+ * Interfaces that are never the machine's primary link.
+ *
+ * `tailscale0` was missing here, so an overlay tunnel counted as a physical
+ * NIC. It only failed to surface because eno1 happened to carry more lifetime
+ * traffic -- had that flipped, the Network card would have silently started
+ * reporting the VPN instead of the wire.
+ */
+const VIRTUAL_IFACE =
+  /^(docker|veth|br-|virbr|lo|tun|tap|wg|tailscale|zt|ham|nebula|cni|flannel|kube|dummy|ifb|sit|gre)/;
 
 function pickPrimaryInterface(host: HostTelemetry) {
   const physical = host.network.filter((n) => !VIRTUAL_IFACE.test(n.name));
@@ -55,6 +64,11 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
 
   const swapPercent = host.memory.swapPercent || 0;
 
+  // Load relative to thread count: 2.35 means nothing until you know it is
+  // spread across 8 threads.
+  const loadPercent = threadCount > 0 ? (host.cpu.loadAvg[0] / threadCount) * 100 : 0;
+  const ioSeverity = severityFor(host.cpu.iowaitPercent || 0, 10, 25);
+
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <MetricCard
@@ -68,14 +82,27 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
         trendMin={0}
         trendMax={100}
         meta={threadCount > 0 ? `${threadCount} threads` : undefined}
+        belowValue={<CoreStrip cores={host.cpu.cores} className="mt-3" />}
         footer={
           <>
-            <span className="font-mono">
-              load {host.cpu.loadAvg.map((n) => n.toFixed(2)).join('  ')}
+            <span className="font-mono" title="1 / 5 / 15 minute load average, as a share of total threads">
+              load {loadPercent.toFixed(0)}%
+              <span className="text-muted-foreground/70">
+                {' '}({host.cpu.loadAvg.map((n) => n.toFixed(2)).join(' ')})
+              </span>
             </span>
-            <span className="truncate" title={host.cpu.model}>
-              {host.cpu.model.replace(/\(R\)|\(TM\)|CPU|Processor/g, '').trim()}
-            </span>
+            {host.cpu.iowaitPercent > 0 ? (
+              <span
+                className={cn('font-mono', ioSeverity !== 'ok' && severityTextClass(ioSeverity))}
+                title="Time blocked waiting on disk. High iowait with low CPU means the disks are the bottleneck."
+              >
+                iowait {host.cpu.iowaitPercent.toFixed(1)}%
+              </span>
+            ) : (
+              <span className="truncate" title={host.cpu.model}>
+                {host.cpu.model.replace(/\(R\)|\(TM\)|CPU|Processor/g, '').trim()}
+              </span>
+            )}
           </>
         }
       />

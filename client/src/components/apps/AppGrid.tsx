@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, LayoutGrid, Plus, X } from 'lucide-react';
+import { Search, LayoutGrid, Plus, X, AlertTriangle, Check } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
 import { Input, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { AppCard } from './AppCard';
 import { EditAppModal } from './EditAppModal';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
+import { containerSeverity, severityRank, cn } from '../../lib/utils';
 
 interface AppGridProps {
   containers?: ContainerItem[];
@@ -20,6 +21,11 @@ interface AppGridProps {
 }
 
 type SortKey = 'default' | 'name' | 'cpu' | 'mem';
+
+/** Containers needing attention, for the summary line and the default order. */
+function needsAttention(item: ContainerItem | CustomAppBookmark, isBookmark: boolean): boolean {
+  return !isBookmark && containerSeverity(item as ContainerItem) !== 'ok';
+}
 
 const PREFERRED_CATEGORY_ORDER = [
   'Media',
@@ -81,6 +87,11 @@ export function AppGrid({
 
   const hiddenCount = useMemo(() => containers.filter((c) => c.hidden).length, [containers]);
 
+  const attentionCount = useMemo(
+    () => containers.filter((c) => !c.hidden && containerSeverity(c) !== 'ok').length,
+    [containers]
+  );
+
   const categories = useMemo(() => {
     const counts: Record<string, number> = {};
     let pinnedCount = 0;
@@ -131,7 +142,13 @@ export function AppGrid({
         return haystack.some((field) => field && String(field).toLowerCase().includes(q));
       })
       .sort((a, b) => {
-        // Pinned items lead in every sort mode.
+        // Anything broken outranks everything, including pins: a dashboard that
+        // buries a dead container between two healthy ones is not monitoring.
+        const aRank = a.isCustomBookmark ? 2 : severityRank(containerSeverity(a.item as ContainerItem));
+        const bRank = b.isCustomBookmark ? 2 : severityRank(containerSeverity(b.item as ContainerItem));
+        if (aRank !== bRank) return aRank - bRank;
+
+        // Pinned items lead among equals.
         if (a.item.pinned !== b.item.pinned) return a.item.pinned ? -1 : 1;
 
         switch (sortBy) {
@@ -207,6 +224,29 @@ export function AppGrid({
           </Select>
         </div>
       </div>
+
+      {!loading && containers.length > 0 && (
+        <p
+          className={cn(
+            'flex items-center gap-1.5 text-2xs',
+            attentionCount > 0 ? 'text-warn' : 'text-muted-foreground'
+          )}
+          role="status"
+        >
+          {attentionCount > 0 ? (
+            <>
+              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+              {attentionCount} container{attentionCount === 1 ? '' : 's'} need
+              {attentionCount === 1 ? 's' : ''} attention — shown first
+            </>
+          ) : (
+            <>
+              <Check className="h-3 w-3 shrink-0 text-ok" aria-hidden="true" />
+              All containers healthy
+            </>
+          )}
+        </p>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

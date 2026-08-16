@@ -18,6 +18,8 @@ export interface MetricCardProps {
   trend?: number[];
   trendMin?: number;
   trendMax?: number;
+  /** Rendered between the headline value and the progress bar. */
+  belowValue?: React.ReactNode;
   /** Detail row at the foot of the card. */
   footer?: React.ReactNode;
   className?: string;
@@ -41,6 +43,7 @@ export function MetricCard({
   trend,
   trendMin,
   trendMax,
+  belowValue,
   footer,
   className,
   onOpen,
@@ -111,6 +114,8 @@ export function MetricCard({
           />
         )}
       </div>
+
+      {belowValue}
 
       {percent !== undefined && (
         <Progress value={percent} severity={severity} height="xs" className="mt-3" />

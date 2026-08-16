@@ -1,6 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
-import { ContainerItem, DockerSystemDf } from '../types.js';
+import { ContainerItem, DockerSystemDf, HealthProbe } from '../types.js';
 import { logger } from '../logger.js';
 
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
@@ -151,61 +151,242 @@ interface RawDockerSystemDf {
   }>;
 }
 
-// Container stats cache (30s TTL to prevent overwhelming docker daemon)
 interface CachedStat {
   cpuPercent: number;
   memoryBytes: number;
   memoryLimitBytes: number;
   timestamp: number;
 }
-const containerStatsCache = new Map<string, CachedStat>();
 
-async function fetchContainerStat(id: string): Promise<CachedStat | null> {
-  const cached = containerStatsCache.get(id);
-  const now = Date.now();
-  if (cached && now - cached.timestamp < 30000) {
-    return cached;
+/** Turns one raw stats frame into the numbers the dashboard shows. */
+function computeStat(raw: RawDockerStats, now: number): CachedStat {
+  let cpuPercent = 0;
+  if (raw.cpu_stats && raw.precpu_stats) {
+    const cpuDelta =
+      (raw.cpu_stats.cpu_usage?.total_usage || 0) -
+      (raw.precpu_stats.cpu_usage?.total_usage || 0);
+    const systemDelta =
+      (raw.cpu_stats.system_cpu_usage || 0) - (raw.precpu_stats.system_cpu_usage || 0);
+    const onlineCpus =
+      raw.cpu_stats.online_cpus || raw.cpu_stats.cpu_usage?.percpu_usage?.length || 1;
+
+    if (systemDelta > 0 && cpuDelta > 0) {
+      cpuPercent = Math.round((cpuDelta / systemDelta) * onlineCpus * 1000) / 10;
+    }
   }
 
-  try {
-    const raw = await dockerApiRequest<RawDockerStats>(`/containers/${id}/stats?stream=false`);
-    let cpuPercent = 0;
-    if (raw.cpu_stats && raw.precpu_stats) {
-      const cpuDelta =
-        (raw.cpu_stats.cpu_usage?.total_usage || 0) -
-        (raw.precpu_stats.cpu_usage?.total_usage || 0);
-      const systemDelta =
-        (raw.cpu_stats.system_cpu_usage || 0) -
-        (raw.precpu_stats.system_cpu_usage || 0);
-      const onlineCpus =
-        raw.cpu_stats.online_cpus ||
-        raw.cpu_stats.cpu_usage?.percpu_usage?.length ||
-        1;
+  let memoryBytes = 0;
+  let memoryLimitBytes = 0;
+  if (raw.memory_stats) {
+    const rawUsage = raw.memory_stats.usage || 0;
+    // Page cache is charged to the container but is reclaimable; excluding it
+    // matches what `docker stats` reports.
+    const cache = raw.memory_stats.stats?.cache ?? raw.memory_stats.stats?.inactive_file ?? 0;
+    memoryBytes = Math.max(0, rawUsage - cache);
+    memoryLimitBytes = raw.memory_stats.limit || 0;
+  }
 
-      if (systemDelta > 0 && cpuDelta > 0) {
-        cpuPercent = Math.round(((cpuDelta / systemDelta) * onlineCpus * 100) * 10) / 10;
+  return { cpuPercent, memoryBytes, memoryLimitBytes, timestamp: now };
+}
+
+/*
+ * Streaming container stats.
+ *
+ * The previous approach issued one `stats?stream=false` request per container on
+ * every poll. Docker holds each of those open for about a second while it
+ * computes a CPU delta, so sixteen containers meant sixteen concurrent
+ * connections and a second of latency every cycle -- and because the result was
+ * then cached for 30s against a 15s sample interval, half the readings shown
+ * were stale by construction.
+ *
+ * Instead we hold one long-lived streaming connection per running container and
+ * keep the most recent frame. The daemon pushes roughly once a second, so the
+ * dashboard always reads a fresh value, and the connection count is stable
+ * rather than proportional to the poll rate.
+ */
+class ContainerStatsStreams {
+  private streams = new Map<string, { req: http.ClientRequest; stopped: boolean }>();
+  private latest = new Map<string, CachedStat>();
+  private backoff = new Map<string, number>();
+
+  /** Opens streams for newly-seen containers and closes those that vanished. */
+  sync(runningIds: string[]): void {
+    const wanted = new Set(runningIds);
+
+    for (const id of this.streams.keys()) {
+      if (!wanted.has(id)) this.stop(id);
+    }
+    for (const id of wanted) {
+      if (!this.streams.has(id)) this.start(id);
+    }
+  }
+
+  private start(id: string): void {
+    if (!isDockerSocketAvailable()) return;
+
+    const entry = { req: null as unknown as http.ClientRequest, stopped: false };
+
+    const req = http.request(
+      {
+        socketPath: DOCKER_SOCKET,
+        path: `/containers/${id}/stats?stream=true`,
+        method: 'GET',
+        headers: { Host: 'docker' },
+      },
+      (res) => {
+        res.setEncoding('utf8');
+        let buffer = '';
+
+        res.on('data', (chunk: string) => {
+          buffer += chunk;
+          // Frames are newline-delimited JSON objects.
+          let idx: number;
+          while ((idx = buffer.indexOf('\n')) !== -1) {
+            const line = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx + 1);
+            if (!line) continue;
+            try {
+              this.latest.set(id, computeStat(JSON.parse(line) as RawDockerStats, Date.now()));
+              this.backoff.delete(id);
+            } catch {
+              // A partial or malformed frame: skip it, keep the stream.
+            }
+          }
+          // Guard against a frame that never terminates.
+          if (buffer.length > 1_000_000) buffer = '';
+        });
+
+        res.on('end', () => this.reconnect(id, entry));
+        res.on('error', () => this.reconnect(id, entry));
+      }
+    );
+
+    entry.req = req;
+    req.on('error', () => this.reconnect(id, entry));
+    req.end();
+
+    this.streams.set(id, entry);
+  }
+
+  /** Reopens a dropped stream with escalating delay, unless it was stopped. */
+  private reconnect(id: string, entry: { stopped: boolean }): void {
+    if (entry.stopped || !this.streams.has(id)) return;
+    this.streams.delete(id);
+
+    const attempt = (this.backoff.get(id) ?? 0) + 1;
+    this.backoff.set(id, attempt);
+    const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+
+    const timer = setTimeout(() => {
+      // Only retry if the container is still expected to be running.
+      if (!entry.stopped) this.start(id);
+    }, delay);
+    timer.unref?.();
+  }
+
+  private stop(id: string): void {
+    const entry = this.streams.get(id);
+    if (entry) {
+      entry.stopped = true;
+      try {
+        entry.req.destroy();
+      } catch {
+        // Already closed.
       }
     }
+    this.streams.delete(id);
+    this.latest.delete(id);
+    this.backoff.delete(id);
+  }
 
-    let memoryBytes = 0;
-    let memoryLimitBytes = 0;
-    if (raw.memory_stats) {
-      const rawUsage = raw.memory_stats.usage || 0;
-      const cache = raw.memory_stats.stats?.cache || raw.memory_stats.stats?.inactive_file || 0;
-      memoryBytes = Math.max(0, rawUsage - cache);
-      memoryLimitBytes = raw.memory_stats.limit || 0;
-    }
+  get(id: string): CachedStat | undefined {
+    return this.latest.get(id);
+  }
 
-    const stat: CachedStat = {
-      cpuPercent,
-      memoryBytes,
-      memoryLimitBytes,
-      timestamp: now,
+  stopAll(): void {
+    for (const id of [...this.streams.keys()]) this.stop(id);
+  }
+
+  get openCount(): number {
+    return this.streams.size;
+  }
+}
+
+const statsStreams = new ContainerStatsStreams();
+
+export function stopContainerStatsStreams(): void {
+  statsStreams.stopAll();
+}
+
+export function containerStreamCount(): number {
+  return statsStreams.openCount;
+}
+
+/* ------------------------------ inspect ------------------------------ */
+
+interface RawInspect {
+  Name?: string;
+  RestartCount?: number;
+  State?: {
+    ExitCode?: number;
+    Error?: string;
+    OOMKilled?: boolean;
+    StartedAt?: string;
+    FinishedAt?: string;
+    Health?: {
+      Status?: string;
+      Log?: Array<{ Start?: string; ExitCode?: number; Output?: string }>;
     };
-    containerStatsCache.set(id, stat);
-    return stat;
+  };
+  HostConfig?: { NetworkMode?: string };
+}
+
+/** Docker uses a zero-ish sentinel for "never". */
+function parseDockerTime(value?: string): number | undefined {
+  if (!value || value.startsWith('0001-01-01')) return undefined;
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? t : undefined;
+}
+
+export interface ContainerDetail {
+  restartCount?: number;
+  exitCode?: number;
+  stateError?: string;
+  oomKilled?: boolean;
+  startedAt?: number;
+  finishedAt?: number;
+  healthLog?: HealthProbe[];
+  networkMode?: string;
+}
+
+/**
+ * The diagnostic half of a container's state.
+ *
+ * `/containers/json` reports a container as "running" even while it is
+ * restart-looping, because between restarts it genuinely is. Restart count,
+ * exit code, OOM flag and the healthcheck log all live here instead.
+ */
+async function fetchContainerDetail(id: string): Promise<ContainerDetail | null> {
+  try {
+    const raw = await dockerApiRequest<RawInspect>(`/containers/${id}/json`);
+    const state = raw.State ?? {};
+
+    return {
+      restartCount: raw.RestartCount,
+      exitCode: state.ExitCode,
+      stateError: state.Error ? state.Error.slice(0, 300) : undefined,
+      oomKilled: state.OOMKilled,
+      startedAt: parseDockerTime(state.StartedAt),
+      finishedAt: parseDockerTime(state.FinishedAt),
+      networkMode: raw.HostConfig?.NetworkMode,
+      healthLog: state.Health?.Log?.slice(-5).map((entry) => ({
+        start: parseDockerTime(entry.Start) ?? 0,
+        exitCode: entry.ExitCode ?? 0,
+        output: (entry.Output ?? '').trim().slice(0, 500),
+      })),
+    };
   } catch {
-    return cached || null;
+    return null;
   }
 }
 
@@ -218,16 +399,30 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
     const raw = await dockerApiRequest<RawDockerContainer[]>('/containers/json?all=1');
     const runningContainers = raw.filter((c) => (c.State || '').toLowerCase() === 'running');
 
-    // Fetch stats for running containers in parallel (cached 30s)
-    const statsPromises = runningContainers.map((c) =>
-      fetchContainerStat(c.Id).then((stat) => ({ id: c.Id.slice(0, 12), fullId: c.Id, stat }))
-    );
-    const statsResults = await Promise.allSettled(statsPromises);
-    const statsMap = new Map<string, CachedStat>();
+    // Keep one live stats stream per running container; reads are then free.
+    statsStreams.sync(runningContainers.map((c) => c.Id));
 
-    for (const res of statsResults) {
-      if (res.status === 'fulfilled' && res.value.stat) {
-        statsMap.set(res.value.id, res.value.stat);
+    // Inspect every container each cycle. Unlike stats, inspect returns
+    // immediately, so this stays cheap even for a few dozen containers -- and
+    // a restart loop has to be caught promptly to be worth catching at all.
+    const detailEntries = await Promise.allSettled(
+      raw.map((c) => fetchContainerDetail(c.Id).then((d) => [c.Id, d] as const))
+    );
+    const detailMap = new Map<string, ContainerDetail>();
+    for (const res of detailEntries) {
+      if (res.status === 'fulfilled' && res.value[1]) {
+        detailMap.set(res.value[0], res.value[1]);
+      }
+    }
+
+    // Resolve `container:<id>` network modes to a readable container name, so a
+    // service sharing a VPN gateway's namespace can say whose it is.
+    const nameById = new Map<string, string>();
+    for (const c of raw) {
+      const n = c.Names?.[0]?.replace(/^\//, '');
+      if (n) {
+        nameById.set(c.Id, n);
+        nameById.set(c.Id.slice(0, 12), n);
       }
     }
 
@@ -253,7 +448,16 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
       }));
 
       const state = (c.State || 'running').toLowerCase() as ContainerItem['state'];
-      const liveStat = statsMap.get(shortId);
+      const liveStat = statsStreams.get(c.Id);
+      const detail = detailMap.get(c.Id);
+
+      // "container:abc123" — surface which container's network is shared.
+      let networkParent: string | undefined;
+      const nm = detail?.networkMode;
+      if (nm?.startsWith('container:')) {
+        const ref = nm.slice('container:'.length);
+        networkParent = nameById.get(ref) ?? nameById.get(ref.slice(0, 12)) ?? ref.slice(0, 12);
+      }
 
       return {
         id: shortId,
@@ -270,6 +474,16 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
         cpuPercent: liveStat?.cpuPercent,
         memoryBytes: liveStat?.memoryBytes,
         memoryLimitBytes: liveStat?.memoryLimitBytes,
+        statAgeMs: liveStat ? Date.now() - liveStat.timestamp : undefined,
+        restartCount: detail?.restartCount,
+        exitCode: detail?.exitCode,
+        stateError: detail?.stateError,
+        oomKilled: detail?.oomKilled,
+        startedAt: detail?.startedAt,
+        finishedAt: detail?.finishedAt,
+        healthLog: detail?.healthLog,
+        networkMode: detail?.networkMode,
+        networkParent,
       };
     });
   } catch (err) {
