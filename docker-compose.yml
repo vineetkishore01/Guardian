@@ -34,6 +34,11 @@ services:
       - TAILSCALE_IP=100.94.238.9
       - PORT=3001
       - NODE_ENV=production
+      # Shutdown / reboot from the dashboard. Off unless explicitly enabled;
+      # in a container this acts on the container unless you supply a command
+      # that reaches the host via GUARDIAN_POWER_COMMAND.
+      # - ENABLE_POWER_CONTROLS=true
+      # - GUARDIAN_POWER_COMMAND=/usr/bin/ssh admin@host sudo systemctl {action}
     deploy:
       resources:
         limits:

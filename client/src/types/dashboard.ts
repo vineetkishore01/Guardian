@@ -177,3 +177,67 @@ export interface FullDashboardState {
   history: HistoryPoint[];
   sources: DataSources;
 }
+
+/* ------------------------------------------------------------------ *
+ * Metric history
+ * ------------------------------------------------------------------ */
+
+export type MetricKey = 'cpu' | 'ram' | 'swap' | 'temp' | 'netRx' | 'netTx' | 'disk';
+
+export type HistoryRange = '1h' | '6h' | '24h' | '7d' | '30d';
+
+export interface MetricSample {
+  t: number;
+  v: Partial<Record<MetricKey, number>>;
+}
+
+export interface HistoryPointValue {
+  t: number;
+  v: number;
+}
+
+export interface HistorySeries {
+  metric: MetricKey;
+  range: HistoryRange;
+  resolution: 'fine' | 'medium' | 'coarse';
+  bucketMs: number;
+  points: HistoryPointValue[];
+  stats: {
+    min: number;
+    max: number;
+    avg: number;
+    latest: number;
+    count: number;
+  } | null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Application logs
+ * ------------------------------------------------------------------ */
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface LogEntry {
+  id: number;
+  t: number;
+  level: LogLevel;
+  scope: string;
+  message: string;
+  detail?: unknown;
+}
+
+/* ------------------------------------------------------------------ *
+ * Power control
+ * ------------------------------------------------------------------ */
+
+export type PowerAction = 'shutdown' | 'reboot';
+
+export interface PowerCapability {
+  enabled: boolean;
+  mechanism: string | null;
+  description: string | null;
+  inContainer: boolean;
+  /** The exact string a caller must echo back to confirm. */
+  confirmationPhrase: string;
+  reason?: string;
+}

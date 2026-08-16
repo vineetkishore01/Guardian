@@ -7,6 +7,7 @@ import { formatBytes, severityFor, severityTextClass } from '../../lib/utils';
 
 interface StorageGaugesProps {
   disks?: DiskMount[];
+  onOpenHistory?: () => void;
 }
 
 const STATUS_LABEL = {
@@ -15,7 +16,7 @@ const STATUS_LABEL = {
   crit: 'Low space',
 } as const;
 
-export function StorageGauges({ disks = [] }: StorageGaugesProps) {
+export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps) {
   if (disks.length === 0) {
     return (
       <div className="surface p-6 text-center text-xs text-muted-foreground">
@@ -34,7 +35,24 @@ export function StorageGauges({ disks = [] }: StorageGaugesProps) {
         const severity = severityFor(disk.usedPercent, 80, 90);
 
         return (
-          <div key={disk.mountPoint} className="surface p-4">
+          <div
+            key={disk.mountPoint}
+            className={`surface p-4 ${onOpenHistory ? 'surface-interactive' : ''}`}
+            onClick={onOpenHistory}
+            onKeyDown={
+              onOpenHistory
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onOpenHistory();
+                    }
+                  }
+                : undefined
+            }
+            role={onOpenHistory ? 'button' : undefined}
+            tabIndex={onOpenHistory ? 0 : undefined}
+            title={onOpenHistory ? 'View disk usage history' : undefined}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2.5">
                 <div className="shrink-0 rounded-md border border-border bg-muted p-2 text-muted-foreground">

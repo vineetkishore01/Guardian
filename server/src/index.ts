@@ -10,8 +10,12 @@ import {
   fetchContainers,
   fetchDockerSystemDf,
   pruneDockerImages,
+  fetchContainerLogs,
   isDockerLive,
 } from './collectors/docker.js';
+import { telemetryHistory, METRIC_KEYS } from './history.js';
+import { logger, installCrashHandlers } from './logger.js';
+import { getPowerCapability, executePowerAction, PowerError } from './power.js';
 import { runServiceProbes } from './prober.js';
 import {
   loadUserConfig,
@@ -25,7 +29,15 @@ import {
   sanitizeSettings,
 } from './store.js';
 import { globalHistory } from './ringbuffer.js';
-import { FullDashboardState, ContainerItem, HostTelemetry } from './types.js';
+import {
+  FullDashboardState,
+  ContainerItem,
+  HostTelemetry,
+  MetricKey,
+  HistoryRange,
+  LogLevel,
+  PowerAction,
+} from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -106,6 +118,23 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     temp: primaryThermal ? primaryThermal.tempC : 0,
   });
 
+  // Long-term store: same observation, retained for 30 days at falling
+  // resolution. Only record what was actually measured -- an absent thermal
+  // sensor must leave a gap, not a run of zeroes.
+  const fullestDisk = disks.reduce<number | undefined>(
+    (worst, d) => (worst === undefined || d.usedPercent > worst ? d.usedPercent : worst),
+    undefined
+  );
+  telemetryHistory.push(host.timestamp, {
+    cpu: host.cpu.usagePercent,
+    ram: host.memory.usedPercent,
+    swap: host.memory.swapTotalBytes > 0 ? host.memory.swapPercent : undefined,
+    temp: primaryThermal?.tempC,
+    netRx: primaryNet?.rxBytesPerSec,
+    netTx: primaryNet?.txBytesPerSec,
+    disk: fullestDisk,
+  });
+
   const state: FullDashboardState = {
     host,
     containers,
@@ -168,10 +197,10 @@ function scheduleSampling(): void {
       .then((state) => {
         if (sseClients.size > 0) broadcastSSE(state);
       })
-      .catch((err) => console.error('[Guardian] Sampling failed:', (err as Error).message));
+      .catch((err) => logger.error('telemetry', 'Sampling failed', err));
   }, intervalMs);
 
-  console.log(`[Guardian] Sampling every ${intervalMs / 1000}s`);
+  logger.info('telemetry', `Sampling every ${intervalMs / 1000}s`);
 }
 
 /* ----------------------------- API ----------------------------- */
@@ -284,6 +313,117 @@ app.post('/api/probes/refresh', async (_req: Request, res: Response, next: NextF
   }
 });
 
+/* --------------------------- Metric history --------------------------- */
+
+const VALID_RANGES: HistoryRange[] = ['1h', '6h', '24h', '7d', '30d'];
+
+app.get('/api/history/:metric', (req: Request, res: Response) => {
+  const metric = String(req.params.metric) as MetricKey;
+  if (!METRIC_KEYS.includes(metric)) {
+    return res.status(400).json({ error: `Unknown metric. Expected one of: ${METRIC_KEYS.join(', ')}` });
+  }
+
+  const requested = String(req.query.range || '24h') as HistoryRange;
+  const range = VALID_RANGES.includes(requested) ? requested : '24h';
+
+  return res.json({
+    ...telemetryHistory.getSeries(metric, range),
+    coverage: telemetryHistory.getCoverage(),
+  });
+});
+
+/** Several metrics in one round trip, for a comparison view. */
+app.get('/api/history', (req: Request, res: Response) => {
+  const requestedRange = String(req.query.range || '24h') as HistoryRange;
+  const range = VALID_RANGES.includes(requestedRange) ? requestedRange : '24h';
+
+  const requestedMetrics = String(req.query.metrics || '')
+    .split(',')
+    .map((m) => m.trim())
+    .filter((m): m is MetricKey => METRIC_KEYS.includes(m as MetricKey));
+
+  const metrics = requestedMetrics.length > 0 ? requestedMetrics : METRIC_KEYS;
+
+  res.json({
+    range,
+    coverage: telemetryHistory.getCoverage(),
+    series: metrics.map((m) => telemetryHistory.getSeries(m, range)),
+  });
+});
+
+/* ------------------------------ App logs ------------------------------ */
+
+const VALID_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+
+app.get('/api/logs', (req: Request, res: Response) => {
+  const level = VALID_LEVELS.includes(String(req.query.level) as LogLevel)
+    ? (String(req.query.level) as LogLevel)
+    : undefined;
+
+  const limit = Number(req.query.limit);
+
+  res.json({
+    ...logger.query({
+      level,
+      scope: req.query.scope ? String(req.query.scope) : undefined,
+      limit: Number.isFinite(limit) ? limit : undefined,
+      since: Number(req.query.since) || undefined,
+    }),
+    scopes: logger.scopes(),
+  });
+});
+
+app.delete('/api/logs', (_req: Request, res: Response) => {
+  logger.clear();
+  res.json({ ok: true });
+});
+
+/* --------------------------- Container logs --------------------------- */
+
+app.get('/api/containers/:id/logs', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tail = Number(req.query.tail);
+    const lines = await fetchContainerLogs(
+      String(req.params.id),
+      Number.isFinite(tail) ? tail : 200
+    );
+    res.json({ lines, tail: lines.length });
+  } catch (err) {
+    logger.warn('docker', 'Container log fetch failed', {
+      container: String(req.params.id),
+      message: (err as Error).message,
+    });
+    next(err);
+  }
+});
+
+/* ---------------------------- Power control ---------------------------- */
+
+app.get('/api/power', (_req: Request, res: Response) => {
+  res.json(getPowerCapability());
+});
+
+app.post('/api/power/:action', async (req: Request, res: Response, next: NextFunction) => {
+  const action = String(req.params.action) as PowerAction;
+  if (action !== 'shutdown' && action !== 'reboot') {
+    return res.status(400).json({ error: 'Action must be "shutdown" or "reboot"' });
+  }
+
+  try {
+    const result = await executePowerAction(
+      action,
+      String(req.body?.confirmation ?? ''),
+      req.ip || 'unknown'
+    );
+    return res.json({ ok: true, action, ...result });
+  } catch (err) {
+    if (err instanceof PowerError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    return next(err);
+  }
+});
+
 /*
  * Unknown /api routes must terminate here. The catch-all below used to check
  * `startsWith('/api')` and then simply not respond, leaving the request hanging
@@ -297,32 +437,83 @@ app.use('/api', (_req: Request, res: Response) => {
 
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 if (fs.existsSync(clientDistPath)) {
-  app.use(express.static(clientDistPath, { index: false, maxAge: '1h' }));
+  // Hashed asset filenames are safe to cache hard and forever.
+  app.use(
+    express.static(clientDistPath, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        // Vite emits `name-HASH.ext`; other bundlers use `name.HASH.ext`.
+        if (/[.-][0-9a-zA-Z_-]{8,}\.(js|css|woff2?|png|svg|jpe?g)$/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+      },
+    })
+  );
+
+  // index.html must never be cached: it is what points at the hashed bundles,
+  // so a stale copy pins the browser to a previous release even after an
+  // upgrade. This bit us during development -- the page kept rendering an old
+  // build after a rebuild.
   app.get('*', (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, must-revalidate');
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 } else {
-  console.warn(`[Guardian] No client build at ${clientDistPath}; serving API only.`);
+  logger.warn('server', `No client build at ${clientDistPath}; serving API only.`);
 }
 
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Guardian] Request failed:', err.message);
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  logger.error('http', `${req.method} ${req.path} failed`, err);
   res.status(500).json({ error: err.message });
 });
 
 /* ----------------------------- Boot ----------------------------- */
 
+// Persist logs alongside the rest of the runtime state.
+const runtimeDir = fs.existsSync(process.env.DATA_DIR || '/data')
+  ? process.env.DATA_DIR || '/data'
+  : path.join(process.cwd(), 'data');
+logger.attachFile(path.join(runtimeDir, 'logs.json'));
+installCrashHandlers();
+
 const server = app.listen(PORT, HOST, () => {
-  console.log(`[Guardian] Listening on http://${HOST}:${PORT}`);
-  scheduleSampling();
-  sampleOnce().catch((err) =>
-    console.error('[Guardian] Initial sample failed:', (err as Error).message)
+  logger.info('server', `Listening on http://${HOST}:${PORT}`);
+
+  const power = getPowerCapability();
+  logger.info(
+    'power',
+    power.enabled
+      ? `Power controls enabled via ${power.mechanism}`
+      : 'Power controls disabled',
+    power.reason ? { reason: power.reason } : undefined
   );
+
+  const coverage = telemetryHistory.getCoverage();
+  logger.info('history', 'History store ready', {
+    points: coverage.totalPoints,
+    oldest: coverage.oldest ? new Date(coverage.oldest).toISOString() : null,
+  });
+
+  scheduleSampling();
+  sampleOnce().catch((err) => logger.error('telemetry', 'Initial sample failed', err));
 });
 
+let shuttingDown = false;
+
 function shutdown(signal: string) {
-  console.log(`[Guardian] ${signal} received, shutting down.`);
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  logger.info('server', `${signal} received, shutting down`);
   if (sampleTimer) clearInterval(sampleTimer);
+
+  // Close open history buckets and flush both stores before exiting, so a
+  // restart does not lose the current interval.
+  telemetryHistory.flushAndSave();
+  logger.save();
+
   for (const client of sseClients) {
     try {
       client.end();

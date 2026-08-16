@@ -16,6 +16,7 @@ interface AppGridProps {
   onSaveBookmark: (bookmark: CustomAppBookmark) => Promise<boolean>;
   onDeleteBookmark: (id: string) => Promise<boolean>;
   onOpenAddApp: () => void;
+  onViewLogs?: (container: ContainerItem) => void;
 }
 
 type SortKey = 'default' | 'name' | 'cpu' | 'mem';
@@ -40,6 +41,7 @@ export function AppGrid({
   onSaveBookmark,
   onDeleteBookmark,
   onOpenAddApp,
+  onViewLogs,
 }: AppGridProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -235,6 +237,7 @@ export function AppGrid({
               settings={settings}
               onEdit={(target) => setEditingItem({ item: target, isCustomBookmark })}
               onDeleteBookmark={onDeleteBookmark}
+              onViewLogs={onViewLogs}
             />
           ))}
         </div>

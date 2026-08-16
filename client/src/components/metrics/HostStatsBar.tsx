@@ -1,12 +1,14 @@
 import React from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { MetricCard, MetricCardSkeleton } from './MetricCard';
-import { HostTelemetry, HistoryPoint } from '../../types/dashboard';
+import { HostTelemetry, HistoryPoint, MetricKey } from '../../types/dashboard';
 import { formatBytes, formatRate, severityFor } from '../../lib/utils';
 
 interface HostStatsBarProps {
   host?: HostTelemetry;
   history?: HistoryPoint[];
+  /** Opens the long-term history view for a metric. */
+  onOpenMetric?: (metric: MetricKey) => void;
 }
 
 /** Interfaces that are never the machine's primary link. */
@@ -27,7 +29,9 @@ function pickPrimaryThermal(host: HostTelemetry) {
   );
 }
 
-export function HostStatsBar({ host, history = [] }: HostStatsBarProps) {
+export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarProps) {
+  const open = (metric: MetricKey) => (onOpenMetric ? () => onOpenMetric(metric) : undefined);
+
   if (!host) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -55,6 +59,7 @@ export function HostStatsBar({ host, history = [] }: HostStatsBarProps) {
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <MetricCard
         label="CPU"
+        onOpen={open('cpu')}
         value={cpuUsage.toFixed(1)}
         unit="%"
         severity={cpuSeverity}
@@ -77,6 +82,7 @@ export function HostStatsBar({ host, history = [] }: HostStatsBarProps) {
 
       <MetricCard
         label="Memory"
+        onOpen={open('ram')}
         value={memUsed.toFixed(1)}
         unit="%"
         severity={memSeverity}
@@ -103,6 +109,7 @@ export function HostStatsBar({ host, history = [] }: HostStatsBarProps) {
 
       <MetricCard
         label="Temperature"
+        onOpen={thermal ? open('temp') : undefined}
         value={thermal ? thermal.tempC.toFixed(1) : '—'}
         unit={thermal ? '°C' : undefined}
         severity={tempSeverity}
@@ -130,6 +137,7 @@ export function HostStatsBar({ host, history = [] }: HostStatsBarProps) {
 
       <MetricCard
         label="Network"
+        onOpen={primaryNet ? open('netRx') : undefined}
         // A dash, not a confident "0 B/s", when there is no interface to read.
         value={primaryNet ? formatRate(primaryNet.rxBytesPerSec).split(' ')[0] : '—'}
         unit={primaryNet ? formatRate(primaryNet.rxBytesPerSec).split(' ')[1] : undefined}

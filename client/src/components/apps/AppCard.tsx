@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2 } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import { resolveContainerUrl, resolveBookmarkUrl, formatBytes, cn } from '../../lib/utils';
 
@@ -9,6 +9,8 @@ interface AppCardProps {
   settings?: DashboardSettings;
   onEdit: (item: ContainerItem | CustomAppBookmark) => void;
   onDeleteBookmark?: (id: string) => void;
+  /** Opens the Docker log viewer. Containers only. */
+  onViewLogs?: (container: ContainerItem) => void;
 }
 
 const HEALTH_PRESENTATION: Record<string, { dot: string; label: string }> = {
@@ -32,6 +34,7 @@ export function AppCard({
   settings,
   onEdit,
   onDeleteBookmark,
+  onViewLogs,
 }: AppCardProps) {
   const [imgError, setImgError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -115,6 +118,21 @@ export function AppCard({
 
             {/* Actions stay visible on touch and keyboard focus, not hover-only. */}
             <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {container && onViewLogs && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewLogs(container);
+                  }}
+                  aria-label={`View logs for ${name}`}
+                  title="View container logs"
+                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ScrollText className="h-3.5 w-3.5" />
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={(e) => {

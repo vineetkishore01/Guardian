@@ -47,7 +47,9 @@ export function formatAgo(timestamp?: number): string {
   if (sec < 60) return `${sec}s ago`;
   const min = Math.floor(sec / 60);
   if (min < 60) return `${min}m ago`;
-  return `${Math.floor(min / 60)}h ago`;
+  const hours = Math.floor(min / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 /* ------------------------------------------------------------------ *

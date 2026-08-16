@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { UserConfigStore, DashboardSettings, CustomAppBookmark } from './types.js';
+import { logger } from './logger.js';
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const CONFIG_FILE = path.join(DATA_DIR, 'guardian.json');
@@ -152,7 +153,7 @@ export function loadUserConfig(): UserConfigStore {
       return cachedConfig!;
     }
   } catch (err) {
-    console.warn('[Store] Could not read config file, initializing defaults:', (err as Error).message);
+    logger.warn('store', 'Could not read config file, initialising defaults', err);
   }
 
   cachedConfig = {
@@ -180,7 +181,7 @@ export function saveUserConfig(config: UserConfigStore): void {
     fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf-8');
     fs.renameSync(tmpPath, filePath);
   } catch (err) {
-    console.error('[Store] Failed to save config file:', (err as Error).message);
+    logger.error('store', 'Failed to save config file', err);
   }
 }
 

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { ContainerItem, DockerSystemDf } from '../types.js';
+import { logger } from '../logger.js';
 
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
 
@@ -272,7 +273,7 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
       };
     });
   } catch (err) {
-    console.warn('[Docker] Using fallback containers list:', (err as Error).message);
+    logger.warn('docker', 'Docker unreachable, using sample container list', err);
     return getMockHostContainers();
   }
 }
@@ -346,6 +347,135 @@ export async function fetchDockerSystemDf(): Promise<DockerSystemDf | null> {
   } catch {
     return getMockDockerDf();
   }
+}
+
+/** Raw (possibly multiplexed) request, used for the log stream. */
+function dockerRawRequest(path: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    if (!isDockerSocketAvailable()) {
+      return reject(new Error('Docker socket not available'));
+    }
+
+    let settled = false;
+    const req = http.request(
+      { socketPath: DOCKER_SOCKET, path, method: 'GET', headers: { Host: 'docker' } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on('data', (chunk: Buffer) => {
+          chunks.push(chunk);
+          size += chunk.length;
+          // Hard ceiling so a chatty container cannot exhaust memory.
+          if (size > 4 * 1024 * 1024) {
+            res.destroy();
+          }
+        });
+        res.on('end', () => {
+          if (settled) return;
+          settled = true;
+          const body = Buffer.concat(chunks);
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(body);
+          } else {
+            reject(new Error(`Docker API error (${res.statusCode}): ${body.toString('utf8', 0, 200)}`));
+          }
+        });
+        res.on('close', () => {
+          if (settled) return;
+          settled = true;
+          resolve(Buffer.concat(chunks));
+        });
+      }
+    );
+
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    });
+    req.setTimeout(8000, () => {
+      if (settled) return;
+      settled = true;
+      req.destroy();
+      reject(new Error('Docker log request timed out'));
+    });
+    req.end();
+  });
+}
+
+export interface ContainerLogLine {
+  stream: 'stdout' | 'stderr';
+  timestamp: string | null;
+  message: string;
+}
+
+/**
+ * Splits Docker's multiplexed log stream.
+ *
+ * When a container has no TTY, the daemon frames each chunk with an 8-byte
+ * header: byte 0 is the stream (1=stdout, 2=stderr), bytes 4–7 are the payload
+ * length, big-endian. With a TTY the output is raw. Reading the frames is what
+ * lets stderr be distinguished from stdout, which is the whole point of a log
+ * viewer for debugging.
+ */
+function demuxDockerLogs(buffer: Buffer): ContainerLogLine[] {
+  const lines: ContainerLogLine[] = [];
+
+  const pushRaw = (stream: 'stdout' | 'stderr', text: string) => {
+    for (const raw of text.split('\n')) {
+      if (!raw.trim()) continue;
+      // `timestamps=1` prefixes an RFC3339 stamp; split it off for display.
+      const match = raw.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)\s?([\s\S]*)$/);
+      lines.push({
+        stream,
+        timestamp: match ? match[1] : null,
+        message: (match ? match[2] : raw).replace(/\r$/, ''),
+      });
+    }
+  };
+
+  let offset = 0;
+  let framed = false;
+
+  while (offset + 8 <= buffer.length) {
+    const streamByte = buffer[offset];
+    // A valid header has a known stream byte and three zero padding bytes.
+    if (
+      (streamByte === 1 || streamByte === 2) &&
+      buffer[offset + 1] === 0 &&
+      buffer[offset + 2] === 0 &&
+      buffer[offset + 3] === 0
+    ) {
+      const length = buffer.readUInt32BE(offset + 4);
+      if (offset + 8 + length > buffer.length) break;
+      framed = true;
+      pushRaw(
+        streamByte === 2 ? 'stderr' : 'stdout',
+        buffer.toString('utf8', offset + 8, offset + 8 + length)
+      );
+      offset += 8 + length;
+    } else {
+      break;
+    }
+  }
+
+  // TTY containers emit an unframed stream; treat the whole body as stdout.
+  if (!framed) {
+    pushRaw('stdout', buffer.toString('utf8'));
+  }
+
+  return lines;
+}
+
+export async function fetchContainerLogs(
+  idOrName: string,
+  tail: number = 200
+): Promise<ContainerLogLine[]> {
+  const safeTail = Math.min(Math.max(Math.round(tail) || 200, 1), 2000);
+  const buffer = await dockerRawRequest(
+    `/containers/${encodeURIComponent(idOrName)}/logs?stdout=1&stderr=1&timestamps=1&tail=${safeTail}`
+  );
+  return demuxDockerLogs(buffer);
 }
 
 export async function pruneDockerImages(): Promise<{ spaceReclaimedBytes: number }> {

@@ -61,6 +61,21 @@
     --surface-shadow: 220 40% 20%;
 
     --radius: 0.7rem;
+
+    /*
+     * Chart series palette. Fixed order, never cycled: slot 1 is always the
+     * primary measure, so a series keeps its colour as filters change.
+     * Validated against the light card surface (#ffffff) for the lightness
+     * band, chroma floor, adjacent-pair CVD separation, normal-vision
+     * separation and 3:1 contrast.
+     */
+    --viz-1: #2f6fe4;
+    --viz-2: #c96a2a;
+    --viz-3: #8b5cf6;
+    --viz-4: #12a37b;
+
+    --viz-grid: 220 15% 91%;
+    --viz-axis: 220 9% 46%;
   }
 
   .dark {
@@ -105,6 +120,17 @@
 
     --surface-highlight: 220 20% 100%;
     --surface-shadow: 224 60% 2%;
+
+    /* Selected for the dark card surface (#14171f), not an automatic flip of
+       the light steps: same four hues, re-stepped into the dark lightness band
+       and re-validated as a set. */
+    --viz-1: #4a90e8;
+    --viz-2: #c9752f;
+    --viz-3: #8570e0;
+    --viz-4: #14a077;
+
+    --viz-grid: 223 15% 18%;
+    --viz-axis: 220 10% 62%;
   }
 }
 

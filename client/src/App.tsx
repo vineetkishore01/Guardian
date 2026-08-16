@@ -8,9 +8,14 @@ import { AppGrid } from './components/apps/AppGrid';
 import { ServicesTable } from './components/services/ServicesTable';
 import { SettingsModal } from './components/layout/SettingsModal';
 import { AddAppModal } from './components/apps/AddAppModal';
+import { LogsPanel } from './components/logs/LogsPanel';
+import { ContainerLogsModal } from './components/logs/ContainerLogsModal';
+import { MetricDetailPage } from './pages/MetricDetailPage';
 import { useLiveTelemetry } from './hooks/useLiveTelemetry';
+import { useRoute } from './lib/router';
 import { Button } from './components/ui/Button';
 import { formatAgo, formatBytes } from './lib/utils';
+import { ContainerItem, MetricKey } from './types/dashboard';
 
 /** Quiet section heading. The data below it should be the loudest thing. */
 function SectionHeading({ title, aside }: { title: string; aside?: React.ReactNode }) {
@@ -39,6 +44,10 @@ export function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addAppOpen, setAddAppOpen] = useState(false);
+  const [logsContainer, setLogsContainer] = useState<ContainerItem | null>(null);
+
+  const [route, navigate] = useRoute();
+  const openMetric = (metric: MetricKey) => navigate({ name: 'metric', metric });
 
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem('guardian_theme');
@@ -107,6 +116,12 @@ export function App() {
         onChangeHostMode={(mode) => updateSettings({ defaultHostMode: mode })}
       />
 
+      {route.name === 'metric' ? (
+        <MetricDetailPage
+          metric={route.metric}
+          onBack={() => navigate({ name: 'dashboard' })}
+        />
+      ) : (
       <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-7 px-4 py-6 sm:px-6 lg:px-8">
         {error && !connected && (
           <div
@@ -157,7 +172,7 @@ export function App() {
               ) : null
             }
           />
-          <HostStatsBar host={data?.host} history={data?.history} />
+          <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
         </section>
 
         <section aria-labelledby="storage-heading">
@@ -179,7 +194,7 @@ export function App() {
               ) : null
             }
           />
-          <StorageGauges disks={disks} />
+          <StorageGauges disks={disks} onOpenHistory={() => openMetric('disk')} />
         </section>
 
         <section aria-labelledby="apps-heading">
@@ -203,6 +218,7 @@ export function App() {
             onSaveBookmark={addCustomApp}
             onDeleteBookmark={deleteCustomApp}
             onOpenAddApp={() => setAddAppOpen(true)}
+            onViewLogs={setLogsContainer}
           />
         </section>
 
@@ -213,7 +229,12 @@ export function App() {
             onRefreshProbes={refreshProbes}
           />
         </section>
+
+        <section aria-labelledby="logs-heading">
+          <LogsPanel />
+        </section>
       </main>
+      )}
 
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-[1600px] flex-col items-center justify-between gap-1 px-4 py-5 text-2xs text-muted-foreground sm:flex-row sm:px-6 lg:px-8">
@@ -239,6 +260,15 @@ export function App() {
         onOpenChange={setAddAppOpen}
         onAddBookmark={addCustomApp}
       />
+
+      {logsContainer && (
+        <ContainerLogsModal
+          open
+          onOpenChange={(open) => !open && setLogsContainer(null)}
+          containerId={logsContainer.id}
+          containerName={logsContainer.displayName || logsContainer.name}
+        />
+      )}
     </div>
   );
 }

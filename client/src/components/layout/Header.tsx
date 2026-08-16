@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shield, Settings, Plus, Trash2, Sun, Moon } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { PowerMenu } from './PowerMenu';
 import { HostTelemetry, DashboardSettings, DockerSystemDf } from '../../types/dashboard';
 import { cn, formatBytes } from '../../lib/utils';
 
@@ -169,6 +170,9 @@ export function Header({
           >
             <Settings className="h-4 w-4" />
           </Button>
+
+          {/* Renders nothing unless the server opted into power controls. */}
+          <PowerMenu />
         </div>
       </div>
     </header>

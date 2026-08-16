@@ -1,4 +1,5 @@
 import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import { LiveSparkline } from '../charts/LiveSparkline';
 import { Progress } from '../ui/Progress';
 import { cn, severityTextClass, type Severity } from '../../lib/utils';
@@ -20,6 +21,8 @@ export interface MetricCardProps {
   /** Detail row at the foot of the card. */
   footer?: React.ReactNode;
   className?: string;
+  /** Makes the whole card a link to that metric's history view. */
+  onOpen?: () => void;
 }
 
 /*
@@ -40,6 +43,7 @@ export function MetricCard({
   trendMax,
   footer,
   className,
+  onOpen,
 }: MetricCardProps) {
   const trendColor =
     severity === 'crit'
@@ -48,10 +52,37 @@ export function MetricCard({
       ? 'hsl(var(--warn))'
       : 'hsl(var(--brand))';
 
+  const interactive = typeof onOpen === 'function';
+
   return (
-    <div className={cn('surface flex flex-col p-4', className)}>
+    <div
+      className={cn('surface flex flex-col p-4', interactive && 'surface-interactive group', className)}
+      onClick={onOpen}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpen?.();
+              }
+            }
+          : undefined
+      }
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={interactive ? `${label}: view history` : undefined}
+      title={interactive ? `View ${label.toLowerCase()} history` : undefined}
+    >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          {label}
+          {interactive && (
+            <ChevronRight
+              className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+              aria-hidden="true"
+            />
+          )}
+        </span>
         {meta && <div className="shrink-0 text-2xs text-muted-foreground">{meta}</div>}
       </div>
 
