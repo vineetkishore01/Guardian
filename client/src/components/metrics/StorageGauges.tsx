@@ -1,9 +1,9 @@
 import React from 'react';
-import { HardDrive } from 'lucide-react';
+import { HardDrive, Thermometer } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Progress } from '../ui/Progress';
 import { DiskMount } from '../../types/dashboard';
-import { formatBytes, severityFor, severityTextClass } from '../../lib/utils';
+import { formatBytes, severityFor, severityTextClass, cn } from '../../lib/utils';
 
 interface StorageGaugesProps {
   disks?: DiskMount[];
@@ -74,7 +74,15 @@ export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps)
                 </div>
               </div>
 
-              <Badge variant={severity === 'ok' ? 'ok' : severity}>{STATUS_LABEL[severity]}</Badge>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {disk.tempC !== undefined && (
+                  <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-2xs font-mono font-medium bg-muted text-muted-foreground">
+                    <Thermometer className="h-2.5 w-2.5" />
+                    {disk.tempC}°C
+                  </span>
+                )}
+                <Badge variant={severity === 'ok' ? 'ok' : severity}>{STATUS_LABEL[severity]}</Badge>
+              </div>
             </div>
 
             <div className="mt-4">

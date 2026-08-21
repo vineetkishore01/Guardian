@@ -5,6 +5,8 @@ import {
   CustomAppBookmark,
   DashboardSettings,
   ServiceProbeResult,
+  SpeedtestResult,
+  WanTelemetry,
 } from '../types/dashboard';
 
 /** Fallback poll cadence when the SSE stream is unavailable. */
@@ -204,11 +206,48 @@ export function useLiveTelemetry() {
     }
   }, []);
 
+  const [speedtestHistory, setSpeedtestHistory] = useState<SpeedtestResult[]>([]);
+
+  useEffect(() => {
+    fetch('/api/speedtest/history')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (body?.history && Array.isArray(body.history)) {
+          setSpeedtestHistory(body.history);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const runSpeedtest = useCallback(async (): Promise<SpeedtestResult> => {
+    const res = await postJson('/api/speedtest/run');
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || `Speedtest failed (HTTP ${res.status})`);
+    }
+    const { result } = await res.json();
+    if (result) {
+      setSpeedtestHistory((prev) => [result, ...prev.filter((r) => r.id !== result.id)]);
+    }
+    return result;
+  }, []);
+
+  const refreshWan = useCallback(async () => {
+    const res = await postJson('/api/network/wan/refresh');
+    if (res.ok) {
+      const { wan } = await res.json();
+      if (wan) {
+        setData((prev) => (prev ? { ...prev, host: { ...prev.host, wan } } : prev));
+      }
+    }
+  }, []);
+
   return {
     data,
     loading,
     connected,
     error,
+    speedtestHistory,
     refetch: fetchStatus,
     updateContainer,
     restartContainer,
@@ -218,5 +257,7 @@ export function useLiveTelemetry() {
     updateSettings,
     pruneDocker,
     refreshProbes,
+    runSpeedtest,
+    refreshWan,
   };
 }

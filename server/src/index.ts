@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 
 import { collectHostTelemetry, isHostDataLive } from './collectors/host.js';
 import { collectDiskUsage } from './collectors/disk.js';
+import { collectGpuTelemetry } from './collectors/gpu.js';
+import { collectWanTelemetry } from './collectors/wan.js';
+import { runSpeedtest, getSpeedtestHistory, getCurrentSpeedtestProgress } from './speedtest.js';
+import { getAppWidgetData } from './integrations/index.js';
 import {
   fetchContainers,
   fetchDockerSystemDf,
@@ -84,19 +88,27 @@ let currentIntervalMs = 0;
 async function sampleTelemetry(): Promise<FullDashboardState> {
   const hostBase = collectHostTelemetry();
   const disks = collectDiskUsage();
-  const host: HostTelemetry = { ...hostBase, disks };
 
   const config = loadUserConfig();
-  const [rawContainers, dockerDf] = await Promise.all([
+  const [rawContainers, dockerDf, gpu, wan] = await Promise.all([
     fetchContainers(),
     fetchDockerSystemDf(),
+    collectGpuTelemetry().catch(() => []),
+    collectWanTelemetry().catch(() => ({})),
   ]);
 
-  const containers: ContainerItem[] = rawContainers.map((c) => {
+  const host: HostTelemetry = {
+    ...hostBase,
+    disks,
+    gpu: gpu && gpu.length > 0 ? gpu : undefined,
+    wan: wan && Object.keys(wan).length > 0 ? wan : undefined,
+  };
+
+  const containerPromises = rawContainers.map(async (c) => {
     const userMeta = config.containers[c.name] || {};
     const preset = getDefaultIconPreset(c.name);
 
-    return {
+    const baseContainer: ContainerItem = {
       ...c,
       displayName: userMeta.displayName || preset?.displayName || c.name,
       iconUrl: userMeta.iconUrl || preset?.icon || undefined,
@@ -105,8 +117,29 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
       hidden: userMeta.hidden ?? false,
       pinned: userMeta.pinned ?? false,
       order: userMeta.order,
+      integration: userMeta.integration,
+      integrationConfig: userMeta.integrationConfig,
     };
+
+    // Attach in-card widget if available
+    const widget = await getAppWidgetData(baseContainer).catch(() => null);
+    if (widget) {
+      baseContainer.widget = widget;
+    }
+    return baseContainer;
   });
+
+  const containers = await Promise.all(containerPromises);
+
+  // Also enrich custom apps with widgets
+  await Promise.all(
+    config.customApps.map(async (app) => {
+      const widget = await getAppWidgetData(app).catch(() => null);
+      if (widget) {
+        app.widget = widget;
+      }
+    })
+  );
 
   // Probe targets are derived from the containers we just discovered, so a new
   // service is covered the moment it starts.
@@ -492,6 +525,36 @@ app.get('/api/processes', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error('telemetry', 'Failed to collect processes', { message: (err as Error).message });
     res.status(500).json({ error: (err as Error).message, processes: [] });
+  }
+});
+
+/* --------------------------- Speedtest & Network ------------------------- */
+
+app.post('/api/speedtest/run', async (_req: Request, res: Response) => {
+  try {
+    const result = await runSpeedtest();
+    sampleOnce().then(broadcastSSE).catch(() => {});
+    res.json({ ok: true, result });
+  } catch (err) {
+    logger.error('speedtest', 'Failed to run speedtest', { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.get('/api/speedtest/history', (_req: Request, res: Response) => {
+  res.json({
+    history: getSpeedtestHistory(),
+    progress: getCurrentSpeedtestProgress(),
+  });
+});
+
+app.post('/api/network/wan/refresh', async (_req: Request, res: Response) => {
+  try {
+    const wan = await collectWanTelemetry(true);
+    sampleOnce().then(broadcastSSE).catch(() => {});
+    res.json({ ok: true, wan });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 

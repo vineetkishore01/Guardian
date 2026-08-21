@@ -4,6 +4,7 @@ import { Header } from './components/layout/Header';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
 import { StorageGauges } from './components/metrics/StorageGauges';
+import { NetworkHealthCard } from './components/network/NetworkHealthCard';
 import { AppGrid } from './components/apps/AppGrid';
 import { ServicesTable } from './components/services/ServicesTable';
 import { SettingsModal } from './components/layout/SettingsModal';
@@ -43,6 +44,9 @@ export function App() {
     updateSettings,
     pruneDocker,
     refreshProbes,
+    speedtestHistory,
+    runSpeedtest,
+    refreshWan,
   } = useLiveTelemetry();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -218,6 +222,16 @@ export function App() {
             }
           />
           <StorageGauges disks={disks} onOpenHistory={() => openMetric('disk')} />
+        </section>
+
+        <section aria-labelledby="network-heading">
+          <SectionHeading title="Internet & WAN" />
+          <NetworkHealthCard
+            wan={data?.host?.wan}
+            speedtestHistory={speedtestHistory}
+            onRunSpeedtest={runSpeedtest}
+            onRefreshWan={refreshWan}
+          />
         </section>
 
         <section aria-labelledby="apps-heading">

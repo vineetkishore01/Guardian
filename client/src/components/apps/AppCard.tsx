@@ -274,6 +274,26 @@ export function AppCard({
         </div>
       </div>
 
+      {/* Live In-Card App Widget (Plex, qBit, Pi-hole, Jellyfin, etc.) */}
+      {item.widget && (
+        <div className="mt-2.5 flex items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/40 px-2 py-1 text-2xs">
+          <span className="truncate text-muted-foreground">{item.widget.subtitle || item.widget.title}</span>
+          {item.widget.badge && (
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 font-mono font-semibold shrink-0',
+                item.widget.badgeColor === 'ok' && 'bg-ok-soft text-ok',
+                item.widget.badgeColor === 'warn' && 'bg-warn-soft text-warn',
+                item.widget.badgeColor === 'brand' && 'bg-brand-soft text-brand',
+                (!item.widget.badgeColor || item.widget.badgeColor === 'muted') && 'bg-muted text-muted-foreground'
+              )}
+            >
+              {item.widget.badge}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-2.5 text-2xs text-muted-foreground">
         {worstIssue ? (
           <span

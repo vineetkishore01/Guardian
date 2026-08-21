@@ -266,11 +266,14 @@ export function sanitizeContainerOverride(
     hidden: cleanBool(b.hidden),
     pinned: cleanBool(b.pinned),
     order: typeof b.order === 'number' && Number.isFinite(b.order) ? b.order : undefined,
+    integration: cleanString(b.integration, 60),
+    integrationConfig: typeof b.integrationConfig === 'object' && b.integrationConfig ? (b.integrationConfig as Record<string, string>) : undefined,
   });
 
   // An explicitly cleared field should erase the override, not be ignored.
   if (b.iconUrl === '' || b.iconUrl === null) patch.iconUrl = undefined;
   if (b.customUrl === '' || b.customUrl === null) patch.customUrl = undefined;
+  if (b.integration === '' || b.integration === null) patch.integration = undefined;
 
   return patch;
 }
@@ -291,6 +294,8 @@ export function sanitizeCustomApp(body: unknown): CustomAppBookmark | null {
     category: cleanString(b.category, 60) || 'General',
     description: cleanString(b.description, 280),
     pinned: cleanBool(b.pinned) ?? false,
+    integration: cleanString(b.integration, 60),
+    integrationConfig: typeof b.integrationConfig === 'object' && b.integrationConfig ? (b.integrationConfig as Record<string, string>) : undefined,
   };
 }
 

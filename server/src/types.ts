@@ -33,6 +33,7 @@ export interface DiskMount {
   usedPercent: number;
   isCritical: boolean; // > 90%
   isWarning: boolean;  // > 80%
+  tempC?: number;
 }
 
 export interface ThermalSensor {
@@ -40,6 +41,68 @@ export interface ThermalSensor {
   label: string;
   tempC: number;
   isCritical: boolean;
+}
+
+export interface FanSensor {
+  name: string;
+  label: string;
+  rpm: number;
+}
+
+export interface GpuTelemetry {
+  id: string;
+  name: string;
+  driver?: string;
+  utilizationPercent: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  memoryPercent: number;
+  temperatureC?: number;
+  powerWatts?: number;
+  fanSpeedPercent?: number;
+}
+
+export interface WanTelemetry {
+  publicIp?: string;
+  isp?: string;
+  city?: string;
+  country?: string;
+  countryCode?: string;
+  pingMs?: number;
+  lastChecked?: number;
+}
+
+export interface SpeedtestResult {
+  id: string;
+  timestamp: number;
+  downloadMbps: number;
+  uploadMbps: number;
+  pingMs: number;
+  jitterMs?: number;
+  server?: string;
+}
+
+export interface SpeedtestProgress {
+  phase: 'idle' | 'ping' | 'download' | 'upload' | 'complete' | 'error';
+  currentMbps: number;
+  progressPercent: number;
+  downloadMbps?: number;
+  uploadMbps?: number;
+  pingMs?: number;
+  error?: string;
+}
+
+export type AppWidgetType = 'media' | 'downloads' | 'dns' | 'arr' | 'custom';
+
+export interface AppWidgetData {
+  type: AppWidgetType;
+  title?: string;
+  subtitle?: string;
+  statusText?: string;
+  badge?: string;
+  badgeColor?: 'ok' | 'warn' | 'crit' | 'brand' | 'muted';
+  metrics?: Array<{ label: string; value: string | number }>;
+  updatedAt: number;
 }
 
 export interface NetworkInterface {
@@ -57,9 +120,13 @@ export interface HostTelemetry {
   uptimeSeconds: number;
   uptimeFormatted: string;
   cpu: CpuInfo;
+  packageTempC?: number;
   memory: MemoryInfo;
   disks: DiskMount[];
   thermals: ThermalSensor[];
+  fans?: FanSensor[];
+  gpu?: GpuTelemetry[];
+  wan?: WanTelemetry;
   network: NetworkInterface[];
   timestamp: number;
 }
@@ -117,6 +184,9 @@ export interface ContainerItem {
   hidden?: boolean;
   pinned?: boolean;
   order?: number;
+  integration?: string;
+  integrationConfig?: Record<string, string>;
+  widget?: AppWidgetData;
 }
 
 export interface CustomAppBookmark {
@@ -128,6 +198,9 @@ export interface CustomAppBookmark {
   description?: string;
   pinned?: boolean;
   order?: number;
+  integration?: string;
+  integrationConfig?: Record<string, string>;
+  widget?: AppWidgetData;
 }
 
 export interface DockerSystemDf {
@@ -198,6 +271,8 @@ export interface UserConfigStore {
     hidden?: boolean;
     pinned?: boolean;
     order?: number;
+    integration?: string;
+    integrationConfig?: Record<string, string>;
   }>;
   customApps: CustomAppBookmark[];
 }

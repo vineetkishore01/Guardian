@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Image as ImageIcon, AlertCircle, RotateCcw, Loader2, ArrowDownToLine } from 'lucide-react';
+import { Search, Image as ImageIcon, AlertCircle, RotateCcw, Loader2, ArrowDownToLine, Radio } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
-import { Input, Field } from '../ui/Input';
+import { Input, Field, Select } from '../ui/Input';
 import { ContainerItem, CustomAppBookmark } from '../../types/dashboard';
 import { ICON_PRESETS, IconPreset } from '../../lib/iconPresets';
 import { cn } from '../../lib/utils';
@@ -46,13 +46,16 @@ export function EditAppModal({
   const [pinned, setPinned] = useState(false);
   const [hidden, setHidden] = useState(false);
   const [description, setDescription] = useState('');
+  const [integration, setIntegration] = useState('');
+  const [integrationUrl, setIntegrationUrl] = useState('');
+  const [integrationApiKey, setIntegrationApiKey] = useState('');
 
   const [searchPreset, setSearchPreset] = useState('');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'details' | 'icon'>('details');
+  const [tab, setTab] = useState<'details' | 'icon' | 'integration'>('details');
   const [previewFailed, setPreviewFailed] = useState(false);
 
   useEffect(() => {
@@ -67,6 +70,9 @@ export function EditAppModal({
     setPinned(item.pinned ?? false);
     setHidden(container?.hidden ?? false);
     setDescription(bookmark?.description || '');
+    setIntegration(item.integration || '');
+    setIntegrationUrl(item.integrationConfig?.url || '');
+    setIntegrationApiKey(item.integrationConfig?.apiKey || '');
     setSearchPreset('');
     setSaveError(null);
     setPreviewFailed(false);
@@ -98,6 +104,10 @@ export function EditAppModal({
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
+    const integrationConfig: Record<string, string> = {};
+    if (integrationUrl.trim()) integrationConfig.url = integrationUrl.trim();
+    if (integrationApiKey.trim()) integrationConfig.apiKey = integrationApiKey.trim();
+
     try {
       const ok = isCustomBookmark
         ? await onSaveBookmark({
@@ -108,6 +118,8 @@ export function EditAppModal({
             category,
             pinned,
             description: description.trim() || undefined,
+            integration: integration || undefined,
+            integrationConfig: Object.keys(integrationConfig).length > 0 ? integrationConfig : undefined,
           })
         : await onSaveContainer(item.name, {
             displayName: displayName.trim() || item.name,
@@ -116,6 +128,8 @@ export function EditAppModal({
             category,
             pinned,
             hidden,
+            integration: integration || undefined,
+            integrationConfig: Object.keys(integrationConfig).length > 0 ? integrationConfig : undefined,
           });
 
       // Only dismiss once the write actually succeeded, so a failed save can
@@ -225,18 +239,18 @@ export function EditAppModal({
       }
     >
       <div className="mb-4 inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5">
-        {(['details', 'icon'] as const).map((t) => (
+        {(['details', 'icon', 'integration'] as const).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
             aria-pressed={tab === t}
             className={cn(
-              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+              'rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors',
               tab === t ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
             )}
           >
-            {t === 'details' ? 'Details' : 'Icon'}
+            {t === 'integration' ? 'Widget / API' : t}
           </button>
         ))}
       </div>
@@ -352,7 +366,7 @@ export function EditAppModal({
             )}
           </div>
         </div>
-      ) : (
+      ) : tab === 'icon' ? (
         <div className="space-y-3">
           <div className="relative">
             <Search
@@ -412,6 +426,54 @@ export function EditAppModal({
               No presets match “{searchPreset}”.
             </p>
           )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">In-Tile Live Widget</p>
+            <p className="mt-0.5 text-2xs">
+              Configure app integration to display live media streams, torrent queues, or DNS stats directly on this tile.
+            </p>
+          </div>
+
+          <Field label="Integration Type" hint="Auto-detect matches known apps (Plex, qBit, Pi-hole, Jellyfin, etc.) automatically.">
+            <Select
+              value={integration}
+              onChange={(e) => setIntegration(e.target.value)}
+              className="w-full h-9"
+            >
+              <option value="">⚡ Auto-Detect (by name / image)</option>
+              <option value="plex">Plex Media Server</option>
+              <option value="jellyfin">Jellyfin Media Server</option>
+              <option value="qbittorrent">qBittorrent</option>
+              <option value="pihole">Pi-hole DNS</option>
+              <option value="adguard">AdGuard Home</option>
+              <option value="none">None (Disable Widget)</option>
+            </Select>
+          </Field>
+
+          <Field
+            label="Base API URL"
+            hint="Leave blank to use the container's published port automatically."
+          >
+            <Input
+              value={integrationUrl}
+              onChange={(e) => setIntegrationUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8080"
+            />
+          </Field>
+
+          <Field
+            label="API Key / Token"
+            hint="Required for Plex (X-Plex-Token), Jellyfin (API key), and Pi-hole (Web password/token)."
+          >
+            <Input
+              type="password"
+              value={integrationApiKey}
+              onChange={(e) => setIntegrationApiKey(e.target.value)}
+              placeholder="Optional or required depending on service"
+            />
+          </Field>
         </div>
       )}
     </Dialog>

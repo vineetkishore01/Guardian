@@ -1,7 +1,8 @@
 import React from 'react';
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Thermometer, Fan } from 'lucide-react';
 import { MetricCard, MetricCardSkeleton } from './MetricCard';
 import { CoreStrip } from './CoreStrip';
+import { GpuCard } from './GpuCard';
 import { HostTelemetry, HistoryPoint, MetricKey } from '../../types/dashboard';
 import { formatBytes, formatRate, severityFor, severityTextClass, cn } from '../../lib/utils';
 
@@ -14,11 +15,6 @@ interface HostStatsBarProps {
 
 /*
  * Interfaces that are never the machine's primary link.
- *
- * `tailscale0` was missing here, so an overlay tunnel counted as a physical
- * NIC. It only failed to surface because eno1 happened to carry more lifetime
- * traffic -- had that flipped, the Network card would have silently started
- * reporting the VPN instead of the wire.
  */
 const VIRTUAL_IFACE =
   /^(docker|veth|br-|virbr|lo|tun|tap|wg|tailscale|zt|ham|nebula|cni|flannel|kube|dummy|ifb|sit|gre)/;
@@ -69,123 +65,148 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
   const loadPercent = threadCount > 0 ? (host.cpu.loadAvg[0] / threadCount) * 100 : 0;
   const ioSeverity = severityFor(host.cpu.iowaitPercent || 0, 10, 25);
 
+  const primaryFan = host.fans && host.fans.length > 0 ? host.fans[0] : null;
+
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <MetricCard
-        label="CPU"
-        onOpen={open('cpu')}
-        value={cpuUsage.toFixed(1)}
-        unit="%"
-        severity={cpuSeverity}
-        trend={history.map((h) => h.cpu)}
-        trendMin={0}
-        trendMax={100}
-        meta={threadCount > 0 ? `${threadCount} threads` : undefined}
-        belowValue={<CoreStrip cores={host.cpu.cores} className="mt-3" />}
-        footer={
-          <>
-            <span className="font-mono" title="1 / 5 / 15 minute load average, as a share of total threads">
-              load {loadPercent.toFixed(0)}%
-              <span className="text-muted-foreground/70">
-                {' '}({host.cpu.loadAvg.map((n) => n.toFixed(2)).join(' ')})
-              </span>
-            </span>
-            {host.cpu.iowaitPercent > 0 ? (
-              <span
-                className={cn('font-mono', ioSeverity !== 'ok' && severityTextClass(ioSeverity))}
-                title="Time blocked waiting on disk. High iowait with low CPU means the disks are the bottleneck."
-              >
-                iowait {host.cpu.iowaitPercent.toFixed(1)}%
-              </span>
-            ) : (
-              <span className="truncate" title={host.cpu.model}>
-                {host.cpu.model.replace(/\(R\)|\(TM\)|CPU|Processor/g, '').trim()}
-              </span>
-            )}
-          </>
-        }
-      />
-
-      <MetricCard
-        label="Memory"
-        onOpen={open('ram')}
-        value={memUsed.toFixed(1)}
-        unit="%"
-        severity={memSeverity}
-        percent={memUsed}
-        trend={history.map((h) => h.ram)}
-        trendMin={0}
-        trendMax={100}
-        meta={`${formatBytes(host.memory.availableBytes)} available`}
-        footer={
-          <>
-            <span className="font-mono">
-              {formatBytes(host.memory.usedBytes)} / {formatBytes(host.memory.totalBytes)}
-            </span>
-            {host.memory.swapTotalBytes > 0 ? (
-              <span className="font-mono">
-                swap {formatBytes(host.memory.swapUsedBytes)} ({swapPercent.toFixed(0)}%)
-              </span>
-            ) : (
-              <span>no swap</span>
-            )}
-          </>
-        }
-      />
-
-      <MetricCard
-        label="Temperature"
-        onOpen={thermal ? open('temp') : undefined}
-        value={thermal ? thermal.tempC.toFixed(1) : '—'}
-        unit={thermal ? '°C' : undefined}
-        severity={tempSeverity}
-        percent={thermal ? Math.min(100, thermal.tempC) : undefined}
-        // Without a sensor the history is all zeroes; drawing a flat line there
-        // would imply a measurement that was never taken.
-        trend={thermal ? history.map((h) => h.temp) : undefined}
-        trendMin={20}
-        trendMax={100}
-        meta={thermal?.label}
-        footer={
-          host.thermals.length > 1 ? (
-            <span className="truncate font-mono">
-              {host.thermals
-                .filter((t) => t.name !== thermal?.name)
-                .slice(0, 2)
-                .map((t) => `${t.label.slice(0, 12)} ${t.tempC.toFixed(0)}°`)
-                .join('   ')}
-            </span>
-          ) : (
-            <span>{host.thermals.length === 0 ? 'no sensors detected' : 'single sensor'}</span>
-          )
-        }
-      />
-
-      <MetricCard
-        label="Network"
-        onOpen={primaryNet ? open('netRx') : undefined}
-        // A dash, not a confident "0 B/s", when there is no interface to read.
-        value={primaryNet ? formatRate(primaryNet.rxBytesPerSec).split(' ')[0] : '—'}
-        unit={primaryNet ? formatRate(primaryNet.rxBytesPerSec).split(' ')[1] : undefined}
-        meta={primaryNet ? <span className="font-mono">{primaryNet.name}</span> : 'no interface'}
-        trend={primaryNet ? history.map((h) => h.netRx) : undefined}
-        footer={
-          primaryNet ? (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="CPU"
+          onOpen={open('cpu')}
+          value={cpuUsage.toFixed(1)}
+          unit="%"
+          severity={cpuSeverity}
+          trend={history.map((h) => h.cpu)}
+          trendMin={0}
+          trendMax={100}
+          meta={
+            <div className="flex items-center gap-1.5">
+              {host.packageTempC !== undefined && (
+                <span className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-2xs font-medium bg-muted text-muted-foreground">
+                  <Thermometer className="h-2.5 w-2.5" />
+                  {host.packageTempC}°C
+                </span>
+              )}
+              {threadCount > 0 && <span>{threadCount} threads</span>}
+            </div>
+          }
+          belowValue={<CoreStrip cores={host.cpu.cores} className="mt-3" />}
+          footer={
             <>
-              <span className="flex items-center gap-1 font-mono">
-                <ArrowDown className="h-3 w-3 text-ok" aria-hidden="true" />
-                {formatRate(primaryNet.rxBytesPerSec)}
+              <span className="font-mono" title="1 / 5 / 15 minute load average, as a share of total threads">
+                load {loadPercent.toFixed(0)}%
+                <span className="text-muted-foreground/70">
+                  {' '}({host.cpu.loadAvg.map((n) => n.toFixed(2)).join(' ')})
+                </span>
               </span>
-              <span className="flex items-center gap-1 font-mono">
-                <ArrowUp className="h-3 w-3 text-brand" aria-hidden="true" />
-                {formatRate(primaryNet.txBytesPerSec)}
-              </span>
+              {host.cpu.iowaitPercent > 0 ? (
+                <span
+                  className={cn('font-mono', ioSeverity !== 'ok' && severityTextClass(ioSeverity))}
+                  title="Time blocked waiting on disk. High iowait with low CPU means the disks are the bottleneck."
+                >
+                  iowait {host.cpu.iowaitPercent.toFixed(1)}%
+                </span>
+              ) : (
+                <span className="truncate" title={host.cpu.model}>
+                  {host.cpu.model.replace(/\(R\)|\(TM\)|CPU|Processor/g, '').trim()}
+                </span>
+              )}
             </>
-          ) : (
-            <span>no network interfaces detected</span>
-          )
-        }
-      />
+          }
+        />
+
+        <MetricCard
+          label="Memory"
+          onOpen={open('ram')}
+          value={memUsed.toFixed(1)}
+          unit="%"
+          severity={memSeverity}
+          percent={memUsed}
+          trend={history.map((h) => h.ram)}
+          trendMin={0}
+          trendMax={100}
+          meta={`${formatBytes(host.memory.availableBytes)} available`}
+          footer={
+            <>
+              <span className="font-mono">
+                {formatBytes(host.memory.usedBytes)} / {formatBytes(host.memory.totalBytes)}
+              </span>
+              {host.memory.swapTotalBytes > 0 ? (
+                <span className="font-mono">
+                  swap {formatBytes(host.memory.swapUsedBytes)} ({swapPercent.toFixed(0)}%)
+                </span>
+              ) : (
+                <span>no swap</span>
+              )}
+            </>
+          }
+        />
+
+        <MetricCard
+          label="Temperature"
+          onOpen={thermal ? open('temp') : undefined}
+          value={thermal ? thermal.tempC.toFixed(1) : '—'}
+          unit={thermal ? '°C' : undefined}
+          severity={tempSeverity}
+          percent={thermal ? Math.min(100, thermal.tempC) : undefined}
+          trend={thermal ? history.map((h) => h.temp) : undefined}
+          trendMin={20}
+          trendMax={100}
+          meta={thermal?.label}
+          footer={
+            primaryFan ? (
+              <span className="flex items-center gap-1 font-mono text-2xs">
+                <Fan className={cn('h-3 w-3 text-muted-foreground', primaryFan.rpm > 0 && 'animate-spin')} />
+                {primaryFan.label}: {primaryFan.rpm} RPM
+              </span>
+            ) : host.thermals.length > 1 ? (
+              <span className="truncate font-mono">
+                {host.thermals
+                  .filter((t) => t.name !== thermal?.name)
+                  .slice(0, 2)
+                  .map((t) => `${t.label.slice(0, 12)} ${t.tempC.toFixed(0)}°`)
+                  .join('   ')}
+              </span>
+            ) : (
+              <span>{host.thermals.length === 0 ? 'no sensors detected' : 'single sensor'}</span>
+            )
+          }
+        />
+
+        <MetricCard
+          label="Network"
+          onOpen={primaryNet ? open('netRx') : undefined}
+          value={primaryNet ? formatRate(primaryNet.rxBytesPerSec).split(' ')[0] : '—'}
+          unit={primaryNet ? formatRate(primaryNet.rxBytesPerSec).split(' ')[1] : undefined}
+          meta={primaryNet ? <span className="font-mono">{primaryNet.name}</span> : 'no interface'}
+          trend={primaryNet ? history.map((h) => h.netRx) : undefined}
+          footer={
+            primaryNet ? (
+              <>
+                <span className="flex items-center gap-1 font-mono">
+                  <ArrowDown className="h-3 w-3 text-ok" aria-hidden="true" />
+                  {formatRate(primaryNet.rxBytesPerSec)}
+                </span>
+                <span className="flex items-center gap-1 font-mono">
+                  <ArrowUp className="h-3 w-3 text-brand" aria-hidden="true" />
+                  {formatRate(primaryNet.txBytesPerSec)}
+                </span>
+              </>
+            ) : (
+              <span>no network interfaces detected</span>
+            )
+          }
+        />
+      </div>
+
+      {/* GPU Cards (if present) */}
+      {host.gpu && host.gpu.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {host.gpu.map((gpu) => (
+            <GpuCard key={gpu.id} gpu={gpu} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

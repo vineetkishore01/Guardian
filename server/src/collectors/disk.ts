@@ -87,8 +87,35 @@ function labelFor(hostPath: string): string {
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : hostPath;
 }
 
+const SYS_DIR = process.env.HOST_SYS || '/sys';
+
+function getDiskTemperatures(): Map<string, number> {
+  const map = new Map<string, number>();
+  const hwmonDir = path.join(SYS_DIR, 'class/hwmon');
+  try {
+    if (!fs.existsSync(hwmonDir)) return map;
+    for (const chip of fs.readdirSync(hwmonDir)) {
+      const chipPath = path.join(hwmonDir, chip);
+      const name = fs.readFileSync(path.join(chipPath, 'name'), 'utf8').trim();
+      const temp1 = path.join(chipPath, 'temp1_input');
+      if (fs.existsSync(temp1)) {
+        const raw = parseInt(fs.readFileSync(temp1, 'utf8').trim(), 10);
+        if (raw > 0 && raw < 120000) {
+          const tempC = Math.round((raw / 1000) * 10) / 10;
+          map.set(name, tempC);
+          if (name.startsWith('nvme')) {
+            map.set('nvme', tempC);
+          }
+        }
+      }
+    }
+  } catch {}
+  return map;
+}
+
 export function collectDiskUsage(): DiskMount[] {
   const procMounts = readProcMounts();
+  const diskTemps = getDiskTemperatures();
 
   // Candidates: the root, the configured NAS path, any explicitly listed
   // mounts, plus everything real that /proc/mounts reports.
@@ -128,6 +155,12 @@ export function collectDiskUsage(): DiskMount[] {
       if (seenDevices.has(dedupeKey)) continue;
       seenDevices.add(dedupeKey);
 
+      const devName = (info?.device || '').split('/').pop() || '';
+      const tempC =
+        diskTemps.get(devName) ??
+        (devName.startsWith('nvme') ? diskTemps.get('nvme') : undefined) ??
+        diskTemps.get('drivetemp');
+
       mounts.push({
         // Report the host's path — that is what the operator recognises.
         mountPoint: hostPath,
@@ -138,6 +171,7 @@ export function collectDiskUsage(): DiskMount[] {
         usedBytes,
         freeBytes,
         usedPercent,
+        tempC,
         isCritical: usedPercent >= 90,
         isWarning: usedPercent >= 80 && usedPercent < 90,
       });

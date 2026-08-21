@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HostTelemetry, MemoryInfo, ThermalSensor, NetworkInterface } from '../types.js';
+import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface } from '../types.js';
 
 const PROC_DIR = process.env.HOST_PROC || '/proc';
 const SYS_DIR = process.env.HOST_SYS || '/sys';
@@ -363,6 +363,53 @@ function parseThermals(): ThermalSensor[] {
   });
 }
 
+/**
+ * Parses cooling fan speeds (RPM) from /sys/class/hwmon.
+ */
+function parseFans(): FanSensor[] {
+  const fans: FanSensor[] = [];
+  const hwmonDir = path.join(SYS_DIR, 'class/hwmon');
+
+  try {
+    if (!fs.existsSync(hwmonDir)) return fans;
+
+    for (const chip of fs.readdirSync(hwmonDir)) {
+      const chipPath = path.join(hwmonDir, chip);
+      const chipName = safeReadFile(path.join(chipPath, 'name'))?.trim() || chip;
+
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(chipPath);
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
+        const match = entry.match(/^fan(\d+)_input$/);
+        if (!match) continue;
+
+        const raw = safeReadFile(path.join(chipPath, entry))?.trim();
+        if (!raw) continue;
+
+        const rpm = parseInt(raw, 10);
+        if (!Number.isFinite(rpm) || rpm < 0) continue;
+
+        const label =
+          safeReadFile(path.join(chipPath, `fan${match[1]}_label`))?.trim() ||
+          `${chipName} Fan ${match[1]}`;
+
+        fans.push({
+          name: `${chip}/fan${match[1]}`,
+          label,
+          rpm,
+        });
+      }
+    }
+  } catch {}
+
+  return fans;
+}
+
 function parseNetwork(): NetworkInterface[] {
   const netContent = safeReadFile(path.join(PROC_DIR, 'net/dev'));
   const results: NetworkInterface[] = [];
@@ -404,8 +451,6 @@ function parseNetwork(): NetworkInterface[] {
     }
   }
 
-  // Same principle as thermals: report nothing rather than invent an "eno1"
-  // pushing a plausible-looking 142 KB/s.
   return results;
 }
 
@@ -432,10 +477,15 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
   const loadAvg = parseLoadAvg();
   const uptime = parseUptime();
   const thermals = parseThermals();
+  const fans = parseFans();
   const network = parseNetwork();
 
   const cpus = os.cpus();
   const cpuModel = cpus.length > 0 ? cpus[0].model : 'Unknown CPU';
+
+  // The primary package temperature leads in sorted thermals
+  const packageSensor = thermals.find((s) => /package|pkg|tctl|tdie/i.test(s.label)) || thermals[0];
+  const packageTempC = packageSensor ? packageSensor.tempC : undefined;
 
   return {
     hostname: os.hostname() || 'unknown',
@@ -451,8 +501,10 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
       iowaitPercent,
       stealPercent,
     },
+    packageTempC,
     memory,
     thermals,
+    fans,
     network,
     timestamp: Date.now(),
   };
