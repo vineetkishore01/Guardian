@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2 } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import {
   resolveContainerUrl,
   resolveBookmarkUrl,
   formatBytes,
+  formatRate,
   cn,
   containerIssues,
   containerSeverity,
@@ -264,12 +265,21 @@ export function AppCard({
           <span className="truncate">{bookmark?.description || 'Bookmark'}</span>
         )}
 
-        {container && (container.cpuPercent !== undefined || container.memoryBytes !== undefined) && (
-          <span className="shrink-0 font-mono">
+        {container && (container.cpuPercent !== undefined || container.memoryBytes !== undefined || container.networkRxBytesPerSec !== undefined) && (
+          <div className="flex shrink-0 items-center gap-1.5 font-mono">
+            {((container.networkRxBytesPerSec || 0) > 1024 || (container.networkTxBytesPerSec || 0) > 1024) && (
+              <span
+                className="flex items-center gap-0.5 text-brand"
+                title={`Network: ↓ ${formatRate(container.networkRxBytesPerSec || 0)}  ↑ ${formatRate(container.networkTxBytesPerSec || 0)}`}
+              >
+                <ArrowDown className="h-2.5 w-2.5" />
+                {formatRate(container.networkRxBytesPerSec || 0)}
+              </span>
+            )}
             {container.cpuPercent !== undefined && `${container.cpuPercent.toFixed(1)}%`}
             {container.cpuPercent !== undefined && container.memoryBytes !== undefined && ' · '}
             {container.memoryBytes !== undefined && formatBytes(container.memoryBytes, 0)}
-          </span>
+          </div>
         )}
       </div>
     </div>

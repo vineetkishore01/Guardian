@@ -464,7 +464,7 @@ app.post('/api/containers/:id/start', async (req: Request, res: Response) => {
 /* --------------------------- Process telemetry ------------------------- */
 
 app.get('/api/processes', async (req: Request, res: Response) => {
-  const sortBy = req.query.sort === 'mem' ? 'mem' : 'cpu';
+  const sortBy = req.query.sort === 'mem' ? 'mem' : req.query.sort === 'net' ? 'net' : 'cpu';
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
   const search = req.query.search ? String(req.query.search) : undefined;
 

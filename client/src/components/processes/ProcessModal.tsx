@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Cpu, HardDrive, RefreshCw, Search, AlertCircle, Terminal, Layers } from 'lucide-react';
+import { Cpu, HardDrive, Network, RefreshCw, Search, AlertCircle, ArrowDown, ArrowUp } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Tabs } from '../ui/Tabs';
 import { ProcessItem } from '../../types/dashboard';
-import { formatBytes, cn } from '../../lib/utils';
+import { formatBytes, formatRate, cn } from '../../lib/utils';
 
 interface ProcessModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialSort?: 'cpu' | 'mem';
+  initialSort?: 'cpu' | 'mem' | 'net';
 }
 
 export function ProcessModal({
@@ -18,7 +18,7 @@ export function ProcessModal({
   onOpenChange,
   initialSort = 'cpu',
 }: ProcessModalProps) {
-  const [sortBy, setSortBy] = useState<'cpu' | 'mem'>(initialSort);
+  const [sortBy, setSortBy] = useState<'cpu' | 'mem' | 'net'>(initialSort);
   const [processes, setProcesses] = useState<ProcessItem[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -84,7 +84,7 @@ export function ProcessModal({
       open={open}
       onOpenChange={onOpenChange}
       title="Host Processes"
-      description="Inspect active host & container processes consuming system CPU and RAM."
+      description="Inspect active host & container processes consuming CPU, Memory, and Network bandwidth."
       maxWidth="2xl"
       footer={
         <div className="flex w-full items-center justify-between">
@@ -109,9 +109,10 @@ export function ProcessModal({
             tabs={[
               { id: 'cpu', label: 'Top CPU' },
               { id: 'mem', label: 'Top Memory' },
+              { id: 'net', label: 'Top Network' },
             ]}
             activeTab={sortBy}
-            onChange={(tab) => setSortBy(tab as 'cpu' | 'mem')}
+            onChange={(tab) => setSortBy(tab as 'cpu' | 'mem' | 'net')}
           />
 
           <div className="flex items-center gap-2">
@@ -166,6 +167,11 @@ export function ProcessModal({
                     <HardDrive className="h-3 w-3" /> RAM
                   </span>
                 </th>
+                <th className="px-3 py-2 text-right font-medium">
+                  <span className="flex items-center justify-end gap-1">
+                    <Network className="h-3 w-3" /> Network
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
@@ -174,6 +180,10 @@ export function ProcessModal({
                   const highCpu = proc.cpuPercent >= 50;
                   const medCpu = proc.cpuPercent >= 15;
                   const highMem = proc.memPercent >= 30;
+                  const rx = proc.netRxBytesPerSec || 0;
+                  const tx = proc.netTxBytesPerSec || 0;
+                  const activeNet = rx > 1024 || tx > 1024;
+                  const highNet = rx > 5 * 1024 * 1024 || tx > 5 * 1024 * 1024;
 
                   return (
                     <tr
@@ -183,7 +193,7 @@ export function ProcessModal({
                       <td className="whitespace-nowrap px-3 py-2 font-mono text-2xs text-muted-foreground">
                         {proc.pid}
                       </td>
-                      <td className="max-w-[18rem] truncate px-3 py-2 sm:max-w-md">
+                      <td className="max-w-[14rem] truncate px-3 py-2 sm:max-w-xs">
                         <div className="flex items-center gap-1.5">
                           <span className="font-medium text-foreground truncate">{proc.name}</span>
                         </div>
@@ -220,12 +230,30 @@ export function ProcessModal({
                           ({proc.memPercent.toFixed(0)}%)
                         </span>
                       </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-mono">
+                        {activeNet ? (
+                          <div className="flex flex-col items-end">
+                            <span className={cn('tabular flex items-center gap-0.5 text-2xs font-medium', highNet ? 'text-brand font-semibold' : 'text-foreground')}>
+                              <ArrowDown className="h-2.5 w-2.5 text-brand" />
+                              {formatRate(rx)}
+                            </span>
+                            {tx > 1024 && (
+                              <span className="tabular flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                <ArrowUp className="h-2.5 w-2.5" />
+                                {formatRate(tx)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-2xs text-muted-foreground/60">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-xs text-muted-foreground">
+                  <td colSpan={6} className="py-8 text-center text-xs text-muted-foreground">
                     {loading ? 'Collecting process statistics…' : 'No matching processes found.'}
                   </td>
                 </tr>

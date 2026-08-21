@@ -90,6 +90,8 @@ export interface ContainerItem {
   cpuPercent?: number;
   memoryBytes?: number;
   memoryLimitBytes?: number;
+  networkRxBytesPerSec?: number;
+  networkTxBytesPerSec?: number;
   /** Age of the stats sample in ms; large values mean the stream is stalled. */
   statAgeMs?: number;
 
@@ -297,4 +299,6 @@ export interface ProcessItem {
   cpuPercent: number;
   memPercent: number;
   memBytes: number;
+  netRxBytesPerSec?: number;
+  netTxBytesPerSec?: number;
 }

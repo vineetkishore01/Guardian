@@ -128,6 +128,8 @@ interface RawDockerStats {
       inactive_file?: number;
     };
   };
+  networks?: Record<string, { rx_bytes?: number; tx_bytes?: number }>;
+  network?: { rx_bytes?: number; tx_bytes?: number };
 }
 
 interface RawDockerSystemDf {
@@ -156,11 +158,15 @@ interface CachedStat {
   cpuPercent: number;
   memoryBytes: number;
   memoryLimitBytes: number;
+  networkRxBytesPerSec?: number;
+  networkTxBytesPerSec?: number;
+  rawRxBytes?: number;
+  rawTxBytes?: number;
   timestamp: number;
 }
 
 /** Turns one raw stats frame into the numbers the dashboard shows. */
-function computeStat(raw: RawDockerStats, now: number): CachedStat {
+function computeStat(raw: RawDockerStats, now: number, prev?: CachedStat): CachedStat {
   let cpuPercent = 0;
   if (raw.cpu_stats && raw.precpu_stats) {
     const cpuDelta =
@@ -187,7 +193,53 @@ function computeStat(raw: RawDockerStats, now: number): CachedStat {
     memoryLimitBytes = raw.memory_stats.limit || 0;
   }
 
-  return { cpuPercent, memoryBytes, memoryLimitBytes, timestamp: now };
+  let rawRxBytes = 0;
+  let rawTxBytes = 0;
+  let hasNet = false;
+
+  if (raw.networks) {
+    for (const iface of Object.values(raw.networks)) {
+      if (iface.rx_bytes !== undefined) {
+        rawRxBytes += iface.rx_bytes;
+        hasNet = true;
+      }
+      if (iface.tx_bytes !== undefined) {
+        rawTxBytes += iface.tx_bytes;
+        hasNet = true;
+      }
+    }
+  } else if (raw.network) {
+    if (raw.network.rx_bytes !== undefined) {
+      rawRxBytes += raw.network.rx_bytes;
+      hasNet = true;
+    }
+    if (raw.network.tx_bytes !== undefined) {
+      rawTxBytes += raw.network.tx_bytes;
+      hasNet = true;
+    }
+  }
+
+  let networkRxBytesPerSec = prev?.networkRxBytesPerSec;
+  let networkTxBytesPerSec = prev?.networkTxBytesPerSec;
+
+  if (hasNet && prev && prev.rawRxBytes !== undefined && prev.rawTxBytes !== undefined && now > prev.timestamp) {
+    const deltaSec = (now - prev.timestamp) / 1000;
+    if (deltaSec > 0) {
+      networkRxBytesPerSec = Math.max(0, Math.round((rawRxBytes - prev.rawRxBytes) / deltaSec));
+      networkTxBytesPerSec = Math.max(0, Math.round((rawTxBytes - prev.rawTxBytes) / deltaSec));
+    }
+  }
+
+  return {
+    cpuPercent,
+    memoryBytes,
+    memoryLimitBytes,
+    networkRxBytesPerSec,
+    networkTxBytesPerSec,
+    rawRxBytes: hasNet ? rawRxBytes : undefined,
+    rawTxBytes: hasNet ? rawTxBytes : undefined,
+    timestamp: now,
+  };
 }
 
 /*
@@ -247,7 +299,8 @@ class ContainerStatsStreams {
             buffer = buffer.slice(idx + 1);
             if (!line) continue;
             try {
-              this.latest.set(id, computeStat(JSON.parse(line) as RawDockerStats, Date.now()));
+              const prev = this.latest.get(id);
+              this.latest.set(id, computeStat(JSON.parse(line) as RawDockerStats, Date.now(), prev));
               this.backoff.delete(id);
             } catch {
               // A partial or malformed frame: skip it, keep the stream.
@@ -475,6 +528,8 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
         cpuPercent: liveStat?.cpuPercent,
         memoryBytes: liveStat?.memoryBytes,
         memoryLimitBytes: liveStat?.memoryLimitBytes,
+        networkRxBytesPerSec: liveStat?.networkRxBytesPerSec,
+        networkTxBytesPerSec: liveStat?.networkTxBytesPerSec,
         statAgeMs: liveStat ? Date.now() - liveStat.timestamp : undefined,
         restartCount: detail?.restartCount,
         exitCode: detail?.exitCode,

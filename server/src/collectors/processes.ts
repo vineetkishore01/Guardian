@@ -10,6 +10,10 @@ const PROC_DIR = process.env.HOST_PROC || '/proc';
 
 interface PidPrev {
   totalTime: number; // utime + stime in clock ticks
+  rxBytes?: number;
+  txBytes?: number;
+  netRxRate?: number;
+  netTxRate?: number;
   timestamp: number;
 }
 
@@ -44,6 +48,40 @@ function getTotalMemoryBytes(): number {
     }
   }
   return os.totalmem();
+}
+
+/**
+ * Parses /proc/[pid]/net/dev to sum total non-loopback RX & TX bytes
+ */
+function getProcessNetBytes(pidDir: string): { rx: number; tx: number } | null {
+  const content = safeReadFile(path.join(pidDir, 'net', 'dev'));
+  if (!content) return null;
+
+  let totalRx = 0;
+  let totalTx = 0;
+  let hasIfaces = false;
+
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+
+    const iface = line.slice(0, colonIdx).trim();
+    if (iface === 'lo') continue;
+
+    const fields = line.slice(colonIdx + 1).trim().split(/\s+/);
+    if (fields.length >= 9) {
+      const rx = parseInt(fields[0], 10);
+      const tx = parseInt(fields[8], 10);
+      if (!Number.isNaN(rx) && !Number.isNaN(tx)) {
+        totalRx += rx;
+        totalTx += tx;
+        hasIfaces = true;
+      }
+    }
+  }
+
+  return hasIfaces ? { rx: totalRx, tx: totalTx } : null;
 }
 
 /**
@@ -110,7 +148,27 @@ async function collectProcessesFromProc(totalMemBytes: number): Promise<ProcessI
       cpuPercent = Math.max(0, (totalTicks / clkTck / procAgeSec) * 100);
     }
 
-    prevPidStats.set(pid, { totalTime: totalTicks, timestamp: now });
+    // Network stats
+    const netBytes = getProcessNetBytes(pidDir);
+    let netRxBytesPerSec = prev?.netRxRate;
+    let netTxBytesPerSec = prev?.netTxRate;
+
+    if (netBytes && prev && prev.rxBytes !== undefined && prev.txBytes !== undefined && now > prev.timestamp) {
+      const deltaSec = (now - prev.timestamp) / 1000;
+      if (deltaSec > 0) {
+        netRxBytesPerSec = Math.max(0, Math.round((netBytes.rx - prev.rxBytes) / deltaSec));
+        netTxBytesPerSec = Math.max(0, Math.round((netBytes.tx - prev.txBytes) / deltaSec));
+      }
+    }
+
+    prevPidStats.set(pid, {
+      totalTime: totalTicks,
+      rxBytes: netBytes?.rx,
+      txBytes: netBytes?.tx,
+      netRxRate: netRxBytesPerSec,
+      netTxRate: netTxBytesPerSec,
+      timestamp: now,
+    });
 
     // Compute Memory bytes (from status or rss pages)
     let memBytes = rssPages * 4096;
@@ -148,6 +206,8 @@ async function collectProcessesFromProc(totalMemBytes: number): Promise<ProcessI
       cpuPercent: Math.round(cpuPercent * 10) / 10,
       memPercent: Math.round(memPercent * 10) / 10,
       memBytes,
+      netRxBytesPerSec,
+      netTxBytesPerSec,
     });
   }
 
@@ -208,10 +268,10 @@ async function collectProcessesFromPs(totalMemBytes: number): Promise<ProcessIte
 }
 
 /**
- * Collects and returns the top system processes sorted by CPU or Memory.
+ * Collects and returns the top system processes sorted by CPU, Memory, or Network.
  */
 export async function collectTopProcesses(
-  sortBy: 'cpu' | 'mem' = 'cpu',
+  sortBy: 'cpu' | 'mem' | 'net' = 'cpu',
   limit: number = 30,
   search?: string
 ): Promise<ProcessItem[]> {
@@ -239,6 +299,12 @@ export async function collectTopProcesses(
 
   if (sortBy === 'mem') {
     processes.sort((a, b) => b.memBytes - a.memBytes);
+  } else if (sortBy === 'net') {
+    processes.sort(
+      (a, b) =>
+        ((b.netRxBytesPerSec || 0) + (b.netTxBytesPerSec || 0)) -
+        ((a.netRxBytesPerSec || 0) + (a.netTxBytesPerSec || 0))
+    );
   } else {
     processes.sort((a, b) => b.cpuPercent - a.cpuPercent);
   }

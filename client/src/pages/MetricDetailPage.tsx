@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { ArrowLeft, RefreshCw, AlertCircle } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, ArrowDown, ArrowUp } from 'lucide-react';
 import { TimeSeriesChart, ChartSeries } from '../components/charts/TimeSeriesChart';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -11,7 +11,7 @@ import {
   severityForMetric,
 } from '../lib/metrics';
 import { MetricKey, HistoryRange, HistorySeries, ProcessItem } from '../types/dashboard';
-import { cn, severityTextClass, formatAgo, formatBytes } from '../lib/utils';
+import { cn, severityTextClass, formatAgo, formatBytes, formatRate } from '../lib/utils';
 
 interface MetricDetailPageProps {
   metric: string;
@@ -65,8 +65,8 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
     try {
       const requests = [fetch(`/api/history/${metric}?range=${range}`)];
       if (companionKey) requests.push(fetch(`/api/history/${companionKey}?range=${range}`));
-      if (metric === 'cpu' || metric === 'ram') {
-        const procSort = metric === 'cpu' ? 'cpu' : 'mem';
+      if (metric === 'cpu' || metric === 'ram' || metric === 'netRx' || metric === 'netTx') {
+        const procSort = metric === 'cpu' ? 'cpu' : metric === 'ram' ? 'mem' : 'net';
         requests.push(fetch(`/api/processes?sort=${procSort}&limit=10`));
       }
 
@@ -80,7 +80,7 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
       if (companionKey) {
         setCompanion(jsonResults[idx++] ?? null);
       }
-      if (metric === 'cpu' || metric === 'ram') {
+      if (metric === 'cpu' || metric === 'ram' || metric === 'netRx' || metric === 'netTx') {
         const procData = jsonResults[idx];
         setProcesses(Array.isArray(procData?.processes) ? procData.processes : []);
       }
@@ -245,12 +245,17 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
         />
       </section>
 
-      {/* Top Consuming Processes breakdown for CPU and RAM */}
-      {(metric === 'cpu' || metric === 'ram') && processes.length > 0 && (
+      {/* Top Consuming Processes breakdown for CPU, RAM, and Network */}
+      {(metric === 'cpu' || metric === 'ram' || metric === 'netRx' || metric === 'netTx') && processes.length > 0 && (
         <section className="surface mt-4 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-medium text-foreground">
-              Top Processes consuming {metric === 'cpu' ? 'CPU' : 'Memory'}
+              Top Processes consuming{' '}
+              {metric === 'cpu'
+                ? 'CPU'
+                : metric === 'ram'
+                ? 'Memory'
+                : 'Network Bandwidth'}
             </h2>
             <span className="text-2xs text-muted-foreground">Live top {processes.length}</span>
           </div>
@@ -264,6 +269,7 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
                   <th scope="col" className="py-2 font-medium">User</th>
                   <th scope="col" className="py-2 text-right font-medium">CPU</th>
                   <th scope="col" className="py-2 text-right font-medium">RAM</th>
+                  <th scope="col" className="py-2 text-right font-medium">Network (Down / Up)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/60">
@@ -271,11 +277,15 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
                   const highCpu = proc.cpuPercent >= 50;
                   const medCpu = proc.cpuPercent >= 15;
                   const highMem = proc.memPercent >= 30;
+                  const rx = proc.netRxBytesPerSec || 0;
+                  const tx = proc.netTxBytesPerSec || 0;
+                  const activeNet = rx > 1024 || tx > 1024;
+                  const highNet = rx > 5 * 1024 * 1024 || tx > 5 * 1024 * 1024;
 
                   return (
                     <tr key={proc.pid} className="hover:bg-muted/30">
                       <td className="py-2 font-mono text-2xs text-muted-foreground">{proc.pid}</td>
-                      <td className="max-w-[20rem] truncate py-2 sm:max-w-md">
+                      <td className="max-w-[16rem] truncate py-2 sm:max-w-md">
                         <span className="font-medium text-foreground">{proc.name}</span>
                         <p className="truncate font-mono text-2xs text-muted-foreground" title={proc.cmd}>
                           {proc.cmd}
@@ -292,6 +302,24 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
                           {formatBytes(proc.memBytes, 0)}
                         </span>
                         <span className="ml-1 text-2xs text-muted-foreground">({proc.memPercent.toFixed(0)}%)</span>
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        {activeNet ? (
+                          <div className="flex flex-col items-end">
+                            <span className={cn('tabular flex items-center gap-0.5 text-2xs font-medium', highNet ? 'text-brand font-semibold' : 'text-foreground')}>
+                              <ArrowDown className="h-2.5 w-2.5 text-brand" />
+                              {formatRate(rx)}
+                            </span>
+                            {tx > 1024 && (
+                              <span className="tabular flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                <ArrowUp className="h-2.5 w-2.5" />
+                                {formatRate(tx)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-2xs text-muted-foreground/60">—</span>
+                        )}
                       </td>
                     </tr>
                   );
