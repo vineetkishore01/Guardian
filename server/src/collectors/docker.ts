@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import { ContainerItem, DockerSystemDf, HealthProbe, PowerAction } from '../types.js';
 import { logger } from '../logger.js';
 
@@ -925,6 +926,64 @@ export async function updateAndRecreateContainer(
 
   // 2. Pull the latest image
   await pullDockerImage(rawImage);
+
+  // Self-update handling: If Guardian is updating itself, spawn a detached helper runner
+  const myHostname = os.hostname();
+  const isSelf =
+    inspectData.Id.startsWith(myHostname) ||
+    myHostname.startsWith(inspectData.Id.slice(0, 12)) ||
+    rawName.toLowerCase() === 'guardian';
+
+  if (isSelf) {
+    logger.info('docker', `Self-update detected for ${rawName}. Spawning detached update runner...`);
+    const createBody = {
+      ...config,
+      HostConfig: hostConfig,
+      NetworkingConfig: endpointsConfig ? { EndpointsConfig: endpointsConfig } : undefined,
+    };
+
+    const runnerScript = `
+const http = require('http');
+function req(p, m, b) {
+  return new Promise((resolve, reject) => {
+    const r = http.request({ socketPath: '/var/run/docker.sock', path: p, method: m, headers: { Host: 'docker', 'Content-Type': 'application/json' } }, res => {
+      let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d));
+    });
+    r.on('error', reject);
+    if (b) r.write(JSON.stringify(b));
+    r.end();
+  });
+}
+async function run() {
+  await new Promise(r => setTimeout(r, 1200));
+  console.log('Stopping old container...');
+  await req('/containers/${encodeURIComponent(inspectData.Id)}/stop?t=5', 'POST').catch(() => {});
+  console.log('Deleting old container...');
+  await req('/containers/${encodeURIComponent(inspectData.Id)}?v=false&force=true', 'DELETE').catch(() => {});
+  console.log('Creating updated container...');
+  const createRes = JSON.parse(await req('/containers/create?name=${encodeURIComponent(rawName)}', 'POST', ${JSON.stringify(createBody)}));
+  console.log('Starting updated container...', createRes);
+  await req('/containers/' + createRes.Id + '/start', 'POST');
+  console.log('Self-update succeeded!');
+}
+run().catch(e => console.error('Self-update runner error', e));
+`.trim();
+
+    const helper = await dockerApiRequest<{ Id: string }>('/containers/create', 'POST', {
+      Image: rawImage,
+      Cmd: ['node', '-e', runnerScript],
+      HostConfig: {
+        AutoRemove: true,
+        Binds: ['/var/run/docker.sock:/var/run/docker.sock'],
+      },
+    });
+
+    if (helper?.Id) {
+      await dockerApiRequest(`/containers/${helper.Id}/start`, 'POST');
+    }
+
+    return { newId: 'self-updating', image: rawImage };
+  }
 
   logger.info('docker', `Stopping old container ${rawName}...`);
   // 3. Stop the container
