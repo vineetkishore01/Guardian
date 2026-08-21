@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown, ArrowDownToLine } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import {
   resolveContainerUrl,
@@ -21,6 +21,8 @@ interface AppCardProps {
   onViewLogs?: (container: ContainerItem) => void;
   /** Restarts a Docker container. Containers only. */
   onRestartContainer?: (container: ContainerItem) => Promise<boolean | void>;
+  /** Pulls the latest image and recreates/restarts the container. Containers only. */
+  onUpdateContainer?: (container: ContainerItem) => Promise<boolean | void>;
 }
 
 const HEALTH_PRESENTATION: Record<string, { dot: string; label: string }> = {
@@ -46,10 +48,12 @@ export function AppCard({
   onDeleteBookmark,
   onViewLogs,
   onRestartContainer,
+  onUpdateContainer,
 }: AppCardProps) {
   const [imgError, setImgError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   const container = !isCustomBookmark ? (item as ContainerItem) : null;
   const bookmark = isCustomBookmark ? (item as CustomAppBookmark) : null;
@@ -136,10 +140,38 @@ export function AppCard({
 
             {/* Actions stay visible on touch and keyboard focus, not hover-only. */}
             <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {container && onUpdateContainer && (
+                <button
+                  type="button"
+                  disabled={updating || restarting}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setUpdating(true);
+                    try {
+                      await onUpdateContainer(container);
+                    } finally {
+                      setUpdating(false);
+                    }
+                  }}
+                  aria-label={`Update image and restart ${name}`}
+                  title={updating ? 'Pulling latest image & recreating…' : 'Update image & recreate container'}
+                  className={cn(
+                    'rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    updating && 'text-brand'
+                  )}
+                >
+                  {updating ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-brand" />
+                  ) : (
+                    <ArrowDownToLine className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              )}
+
               {container && onRestartContainer && (
                 <button
                   type="button"
-                  disabled={restarting}
+                  disabled={restarting || updating}
                   onClick={async (e) => {
                     e.stopPropagation();
                     setRestarting(true);

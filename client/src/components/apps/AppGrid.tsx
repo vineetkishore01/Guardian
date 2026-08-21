@@ -19,6 +19,7 @@ interface AppGridProps {
   onOpenAddApp: () => void;
   onViewLogs?: (container: ContainerItem) => void;
   onRestartContainer?: (container: ContainerItem) => Promise<boolean | void>;
+  onUpdateContainer?: (container: ContainerItem) => Promise<boolean | void>;
 }
 
 type SortKey = 'default' | 'name' | 'cpu' | 'mem';
@@ -50,6 +51,7 @@ export function AppGrid({
   onOpenAddApp,
   onViewLogs,
   onRestartContainer,
+  onUpdateContainer,
 }: AppGridProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -281,6 +283,7 @@ export function AppGrid({
               onDeleteBookmark={onDeleteBookmark}
               onViewLogs={onViewLogs}
               onRestartContainer={onRestartContainer}
+              onUpdateContainer={onUpdateContainer}
             />
           ))}
         </div>
@@ -324,6 +327,7 @@ export function AppGrid({
           onSaveContainer={onSaveContainer}
           onSaveBookmark={onSaveBookmark}
           onRestartContainer={onRestartContainer}
+          onUpdateContainer={onUpdateContainer}
         />
       )}
     </div>

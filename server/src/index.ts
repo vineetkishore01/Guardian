@@ -14,6 +14,7 @@ import {
   restartContainer,
   stopContainer,
   startContainer,
+  updateAndRecreateContainer,
   isDockerLive,
   stopContainerStatsStreams,
   containerStreamCount,
@@ -457,6 +458,23 @@ app.post('/api/containers/:id/start', async (req: Request, res: Response) => {
     res.json({ ok: true, message: `Container ${id} started` });
   } catch (err) {
     logger.error('docker', `Failed to start container ${id}`, { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post('/api/containers/:id/update', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  try {
+    logger.info('docker', `Pulling image and updating container ${id}`, { requestedBy: req.ip });
+    const result = await updateAndRecreateContainer(id);
+    sampleOnce().then(broadcastSSE).catch(() => {});
+    res.json({
+      ok: true,
+      message: `Container ${id} updated to latest ${result.image} and restarted`,
+      newId: result.newId,
+    });
+  } catch (err) {
+    logger.error('docker', `Failed to update container ${id}`, { message: (err as Error).message });
     res.status(500).json({ error: (err as Error).message });
   }
 });

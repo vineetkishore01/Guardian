@@ -834,6 +834,166 @@ export async function startContainer(idOrName: string): Promise<void> {
 }
 
 /**
+ * Pulls the latest version of a Docker image from registry.
+ */
+export function pullDockerImage(imageName: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!isDockerSocketAvailable()) {
+      return reject(new Error('Docker daemon socket is unavailable'));
+    }
+
+    let isSettled = false;
+    const req = http.request(
+      {
+        socketPath: DOCKER_SOCKET,
+        path: `/images/create?fromImage=${encodeURIComponent(imageName)}`,
+        method: 'POST',
+        headers: { Host: 'docker' },
+      },
+      (res) => {
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          if (isSettled) return;
+          isSettled = true;
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(data);
+          } else {
+            reject(new Error(`Failed to pull image ${imageName} (${res.statusCode}): ${data.slice(0, 120)}`));
+          }
+        });
+      }
+    );
+
+    req.on('error', (err) => {
+      if (isSettled) return;
+      isSettled = true;
+      reject(err);
+    });
+
+    // Timeout after 10 minutes for slow connections or huge images
+    req.setTimeout(600_000, () => {
+      if (isSettled) return;
+      isSettled = true;
+      req.destroy();
+      reject(new Error(`Pulling image ${imageName} timed out after 10 minutes`));
+    });
+
+    req.end();
+  });
+}
+
+interface InspectContainerResult {
+  Id: string;
+  Name: string;
+  Config?: Record<string, unknown> & { Image: string };
+  HostConfig?: Record<string, unknown>;
+  NetworkSettings?: {
+    Networks?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Pulls the latest image and recreates/restarts the container with the same configuration.
+ */
+export async function updateAndRecreateContainer(
+  idOrName: string
+): Promise<{ newId: string; image: string }> {
+  if (!isDockerSocketAvailable()) {
+    throw new Error('Docker daemon socket is unavailable');
+  }
+
+  // 1. Inspect existing container to get its exact configuration
+  const inspectData = await dockerApiRequest<InspectContainerResult>(
+    `/containers/${encodeURIComponent(idOrName)}/json`
+  );
+  if (!inspectData || !inspectData.Config) {
+    throw new Error(`Could not inspect container ${idOrName}`);
+  }
+
+  const rawImage = inspectData.Config.Image;
+  const rawName = (inspectData.Name || idOrName).replace(/^\//, '');
+  const config = inspectData.Config;
+  const hostConfig = inspectData.HostConfig;
+  const networkSettings = inspectData.NetworkSettings;
+  const endpointsConfig = networkSettings?.Networks;
+
+  logger.info('docker', `Pulling updated image for ${rawName}: ${rawImage}`);
+
+  // 2. Pull the latest image
+  await pullDockerImage(rawImage);
+
+  logger.info('docker', `Stopping old container ${rawName}...`);
+  // 3. Stop the container
+  try {
+    await stopContainer(idOrName, 15);
+  } catch {
+    // Might already be stopped
+  }
+
+  // 4. Rename old container temporarily to avoid name conflicts
+  const tempName = `${rawName}_old_${Date.now()}`;
+  try {
+    await dockerApiRequest(
+      `/containers/${encodeURIComponent(idOrName)}/rename?name=${encodeURIComponent(tempName)}`,
+      'POST'
+    );
+  } catch (err) {
+    logger.warn('docker', `Failed to rename container before recreate, removing directly`, err);
+    await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}?v=false&force=true`, 'DELETE');
+  }
+
+  // 5. Create the replacement container with the same configuration and updated image
+  let newContainerId: string;
+  try {
+    const createBody = {
+      ...config,
+      HostConfig: hostConfig,
+      NetworkingConfig: endpointsConfig ? { EndpointsConfig: endpointsConfig } : undefined,
+    };
+
+    const created = await dockerApiRequest<{ Id: string }>(
+      `/containers/create?name=${encodeURIComponent(rawName)}`,
+      'POST',
+      createBody
+    );
+    newContainerId = created.Id;
+  } catch (createErr) {
+    // Attempt rollback if recreation failed
+    logger.error('docker', `Failed to create new container for ${rawName}, attempting rollback`, createErr);
+    try {
+      await dockerApiRequest(
+        `/containers/${encodeURIComponent(tempName)}/rename?name=${encodeURIComponent(rawName)}`,
+        'POST'
+      );
+      await startContainer(rawName);
+    } catch {}
+    throw new Error(`Failed to recreate container ${rawName}: ${(createErr as Error).message}`);
+  }
+
+  // 6. Start the new container
+  try {
+    await startContainer(newContainerId);
+  } catch (startErr) {
+    logger.error('docker', `Failed to start new container ${rawName}`, startErr);
+    throw new Error(`New container created but failed to start: ${(startErr as Error).message}`);
+  }
+
+  // 7. Clean up the old container
+  try {
+    await dockerApiRequest(`/containers/${encodeURIComponent(tempName)}?v=false&force=true`, 'DELETE');
+  } catch {
+    // Ignore cleanup error
+  }
+
+  logger.info('docker', `Successfully updated and started container ${rawName} (${newContainerId.slice(0, 12)})`);
+  return { newId: newContainerId, image: rawImage };
+}
+
+/**
  * Executes a host power action (reboot or shutdown) via Docker Engine socket.
  * Spawns a privileged runner connected to host PID/IPC namespace to trigger the host kernel/systemd.
  */

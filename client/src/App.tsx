@@ -37,6 +37,7 @@ export function App() {
     refetch,
     updateContainer,
     restartContainer,
+    updateContainerImage,
     addCustomApp,
     deleteCustomApp,
     updateSettings,
@@ -243,6 +244,9 @@ export function App() {
             onViewLogs={setLogsContainer}
             onRestartContainer={async (container) => {
               await restartContainer(container.name || container.id);
+            }}
+            onUpdateContainer={async (container) => {
+              await updateContainerImage(container.name || container.id);
             }}
           />
         </section>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Image as ImageIcon, AlertCircle, RotateCcw, Loader2 } from 'lucide-react';
+import { Search, Image as ImageIcon, AlertCircle, RotateCcw, Loader2, ArrowDownToLine } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input, Field } from '../ui/Input';
@@ -15,6 +15,7 @@ interface EditAppModalProps {
   onSaveContainer: (name: string, updates: Partial<ContainerItem>) => Promise<boolean>;
   onSaveBookmark: (bookmark: CustomAppBookmark) => Promise<boolean>;
   onRestartContainer?: (container: ContainerItem) => Promise<boolean | void>;
+  onUpdateContainer?: (container: ContainerItem) => Promise<boolean | void>;
 }
 
 const CATEGORIES = [
@@ -36,6 +37,7 @@ export function EditAppModal({
   onSaveContainer,
   onSaveBookmark,
   onRestartContainer,
+  onUpdateContainer,
 }: EditAppModalProps) {
   const [displayName, setDisplayName] = useState('');
   const [iconUrl, setIconUrl] = useState('');
@@ -48,6 +50,7 @@ export function EditAppModal({
   const [searchPreset, setSearchPreset] = useState('');
   const [saving, setSaving] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [tab, setTab] = useState<'details' | 'icon'>('details');
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -138,11 +141,46 @@ export function EditAppModal({
       maxWidth="lg"
       footer={
         <>
+          <div className="mr-auto flex flex-wrap items-center gap-2">
+          {!isCustomBookmark && onUpdateContainer && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={updating || restarting || saving}
+              onClick={async () => {
+                setUpdating(true);
+                setSaveError(null);
+                try {
+                  await onUpdateContainer(item as ContainerItem);
+                  onOpenChange(false);
+                } catch (err) {
+                  setSaveError((err as Error).message || 'Failed to update container image');
+                } finally {
+                  setUpdating(false);
+                }
+              }}
+              className="text-xs"
+              title="Pull latest image and recreate container"
+            >
+              {updating ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-brand" />
+                  Updating Image…
+                </>
+              ) : (
+                <>
+                  <ArrowDownToLine className="h-3.5 w-3.5" />
+                  Update Image
+                </>
+              )}
+            </Button>
+          )}
+
           {!isCustomBookmark && onRestartContainer && (
             <Button
               variant="outline"
               size="sm"
-              disabled={restarting || saving}
+              disabled={restarting || updating || saving}
               onClick={async () => {
                 setRestarting(true);
                 setSaveError(null);
@@ -155,7 +193,7 @@ export function EditAppModal({
                   setRestarting(false);
                 }
               }}
-              className="mr-auto text-xs"
+              className="text-xs"
             >
               {restarting ? (
                 <>
@@ -165,11 +203,12 @@ export function EditAppModal({
               ) : (
                 <>
                   <RotateCcw className="h-3.5 w-3.5" />
-                  Restart Container
+                  Restart
                 </>
               )}
             </Button>
           )}
+        </div>
           {saveError && (
             <span className="mr-auto flex items-center gap-1.5 text-2xs text-crit" role="alert">
               <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />

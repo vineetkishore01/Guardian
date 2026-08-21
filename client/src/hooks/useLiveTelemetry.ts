@@ -144,6 +144,15 @@ export function useLiveTelemetry() {
     [mutate]
   );
 
+  const updateContainerImage = useCallback(
+    (idOrName: string) =>
+      mutate(
+        () => postJson(`/api/containers/${encodeURIComponent(idOrName)}/update`),
+        'Failed to update and restart container image'
+      ),
+    [mutate]
+  );
+
   const addCustomApp = useCallback(
     (app: Partial<CustomAppBookmark>) =>
       mutate(() => postJson('/api/custom-apps', app), 'Failed to save bookmark'),
@@ -203,6 +212,7 @@ export function useLiveTelemetry() {
     refetch: fetchStatus,
     updateContainer,
     restartContainer,
+    updateContainerImage,
     addCustomApp,
     deleteCustomApp,
     updateSettings,
