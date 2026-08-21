@@ -1,6 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
-import { ContainerItem, DockerSystemDf, HealthProbe } from '../types.js';
+import { ContainerItem, DockerSystemDf, HealthProbe, PowerAction } from '../types.js';
 import { logger } from '../logger.js';
 
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
@@ -745,6 +745,91 @@ export async function pruneDockerImages(
     return { spaceReclaimedBytes: res.SpaceReclaimed || 0, scope };
   } catch (err) {
     throw new Error(`Failed to prune Docker images: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Restarts a container by ID or name using Docker API.
+ */
+export async function restartContainer(idOrName: string, timeoutSec: number = 10): Promise<void> {
+  if (!isDockerSocketAvailable()) {
+    throw new Error('Docker daemon socket is unavailable');
+  }
+  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/restart?t=${timeoutSec}`, 'POST');
+}
+
+/**
+ * Stops a container by ID or name.
+ */
+export async function stopContainer(idOrName: string, timeoutSec: number = 10): Promise<void> {
+  if (!isDockerSocketAvailable()) {
+    throw new Error('Docker daemon socket is unavailable');
+  }
+  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/stop?t=${timeoutSec}`, 'POST');
+}
+
+/**
+ * Starts a container by ID or name.
+ */
+export async function startContainer(idOrName: string): Promise<void> {
+  if (!isDockerSocketAvailable()) {
+    throw new Error('Docker daemon socket is unavailable');
+  }
+  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/start`, 'POST');
+}
+
+/**
+ * Executes a host power action (reboot or shutdown) via Docker Engine socket.
+ * Spawns a privileged runner connected to host PID/IPC namespace to trigger the host kernel/systemd.
+ */
+export async function executeHostPowerViaDocker(action: PowerAction): Promise<void> {
+  if (!isDockerSocketAvailable()) {
+    throw new Error('Docker socket unavailable for power action');
+  }
+
+  // Find an existing image on the host so we don't trigger a network pull
+  let image = 'alpine:latest';
+  try {
+    const images = await dockerApiRequest<Array<{ RepoTags?: string[] }>>('/images/json');
+    if (images && images.length > 0) {
+      const valid = images.find((img) => img.RepoTags && img.RepoTags.length > 0 && !img.RepoTags[0].includes('<none>'));
+      if (valid?.RepoTags?.[0]) {
+        image = valid.RepoTags[0];
+      }
+    }
+  } catch {
+    // Keep fallback image
+  }
+
+  const sysrqChar = action === 'reboot' ? 'b' : 'o';
+  const sysCmd = action === 'reboot' ? 'reboot' : 'poweroff';
+
+  // Shell script: try systemctl via nsenter first, fallback to sysrq-trigger or direct power command
+  const script = `
+    if command -v nsenter >/dev/null 2>&1; then
+      nsenter -t 1 -m -u -i -n -p -- systemctl ${sysCmd} 2>/dev/null || nsenter -t 1 -m -u -i -n -p -- shutdown -h now 2>/dev/null
+    fi
+    echo 1 > /proc/sys/kernel/sysrq 2>/dev/null
+    echo s > /proc/sysrq-trigger 2>/dev/null
+    echo u > /proc/sysrq-trigger 2>/dev/null
+    echo ${sysrqChar} > /proc/sysrq-trigger 2>/dev/null
+    ${sysCmd} -f 2>/dev/null || true
+  `.trim();
+
+  const createRes = await dockerApiRequest<{ Id: string }>('/containers/create', 'POST', {
+    Image: image,
+    Cmd: ['sh', '-c', script],
+    HostConfig: {
+      AutoRemove: true,
+      Privileged: true,
+      PidMode: 'host',
+      IpcMode: 'host',
+      Binds: ['/proc:/proc:rw', '/sys:/sys:rw'],
+    },
+  });
+
+  if (createRes?.Id) {
+    await dockerApiRequest(`/containers/${createRes.Id}/start`, 'POST');
   }
 }
 

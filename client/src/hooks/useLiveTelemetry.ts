@@ -135,6 +135,15 @@ export function useLiveTelemetry() {
     [mutate]
   );
 
+  const restartContainer = useCallback(
+    (idOrName: string) =>
+      mutate(
+        () => postJson(`/api/containers/${encodeURIComponent(idOrName)}/restart`),
+        'Failed to restart container'
+      ),
+    [mutate]
+  );
+
   const addCustomApp = useCallback(
     (app: Partial<CustomAppBookmark>) =>
       mutate(() => postJson('/api/custom-apps', app), 'Failed to save bookmark'),
@@ -193,6 +202,7 @@ export function useLiveTelemetry() {
     error,
     refetch: fetchStatus,
     updateContainer,
+    restartContainer,
     addCustomApp,
     deleteCustomApp,
     updateSettings,

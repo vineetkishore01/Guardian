@@ -11,10 +11,14 @@ import {
   fetchDockerSystemDf,
   pruneDockerImages,
   fetchContainerLogs,
+  restartContainer,
+  stopContainer,
+  startContainer,
   isDockerLive,
   stopContainerStatsStreams,
   containerStreamCount,
 } from './collectors/docker.js';
+import { collectTopProcesses } from './collectors/processes.js';
 import { telemetryHistory, METRIC_KEYS } from './history.js';
 import { logger, installCrashHandlers } from './logger.js';
 import { getPowerCapability, executePowerAction, PowerError } from './power.js';
@@ -412,6 +416,64 @@ app.get('/api/containers/:id/logs', async (req: Request, res: Response, next: Ne
       message: (err as Error).message,
     });
     next(err);
+  }
+});
+
+/* --------------------------- Container control ------------------------- */
+
+app.post('/api/containers/:id/restart', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  try {
+    await restartContainer(id);
+    logger.info('docker', `Restarted container ${id}`, { requestedBy: req.ip });
+    // Trigger immediate resample so status updates across SSE stream
+    sampleOnce().then(broadcastSSE).catch(() => {});
+    res.json({ ok: true, message: `Container ${id} restarted successfully` });
+  } catch (err) {
+    logger.error('docker', `Failed to restart container ${id}`, { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post('/api/containers/:id/stop', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  try {
+    await stopContainer(id);
+    logger.info('docker', `Stopped container ${id}`, { requestedBy: req.ip });
+    sampleOnce().then(broadcastSSE).catch(() => {});
+    res.json({ ok: true, message: `Container ${id} stopped` });
+  } catch (err) {
+    logger.error('docker', `Failed to stop container ${id}`, { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.post('/api/containers/:id/start', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  try {
+    await startContainer(id);
+    logger.info('docker', `Started container ${id}`, { requestedBy: req.ip });
+    sampleOnce().then(broadcastSSE).catch(() => {});
+    res.json({ ok: true, message: `Container ${id} started` });
+  } catch (err) {
+    logger.error('docker', `Failed to start container ${id}`, { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/* --------------------------- Process telemetry ------------------------- */
+
+app.get('/api/processes', async (req: Request, res: Response) => {
+  const sortBy = req.query.sort === 'mem' ? 'mem' : 'cpu';
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+  const search = req.query.search ? String(req.query.search) : undefined;
+
+  try {
+    const processes = await collectTopProcesses(sortBy, limit, search);
+    res.json({ processes, count: processes.length, sortBy });
+  } catch (err) {
+    logger.error('telemetry', 'Failed to collect processes', { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message, processes: [] });
   }
 });
 

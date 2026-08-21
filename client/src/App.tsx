@@ -10,6 +10,7 @@ import { SettingsModal } from './components/layout/SettingsModal';
 import { AddAppModal } from './components/apps/AddAppModal';
 import { LogsPanel } from './components/logs/LogsPanel';
 import { ContainerLogsModal } from './components/logs/ContainerLogsModal';
+import { ProcessModal } from './components/processes/ProcessModal';
 import { MetricDetailPage } from './pages/MetricDetailPage';
 import { useLiveTelemetry } from './hooks/useLiveTelemetry';
 import { useRoute } from './lib/router';
@@ -35,6 +36,7 @@ export function App() {
     error,
     refetch,
     updateContainer,
+    restartContainer,
     addCustomApp,
     deleteCustomApp,
     updateSettings,
@@ -44,6 +46,10 @@ export function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addAppOpen, setAddAppOpen] = useState(false);
+  const [processesOpen, setProcessesOpen] = useState<{ open: boolean; sort: 'cpu' | 'mem' }>({
+    open: false,
+    sort: 'cpu',
+  });
   const [logsContainer, setLogsContainer] = useState<ContainerItem | null>(null);
 
   const [route, navigate] = useRoute();
@@ -113,6 +119,7 @@ export function App() {
         onToggleTheme={() => setIsDark((v) => !v)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenAddApp={() => setAddAppOpen(true)}
+        onOpenProcesses={() => setProcessesOpen({ open: true, sort: 'cpu' })}
         onChangeHostMode={(mode) => updateSettings({ defaultHostMode: mode })}
       />
 
@@ -165,11 +172,20 @@ export function App() {
           <SectionHeading
             title="System"
             aside={
-              data?.host?.timestamp ? (
-                <span title={new Date(data.host.timestamp).toLocaleString()}>
-                  updated {formatAgo(data.host.timestamp)}
-                </span>
-              ) : null
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setProcessesOpen({ open: true, sort: 'cpu' })}
+                  className="text-2xs font-medium text-brand hover:underline"
+                >
+                  View processes
+                </button>
+                {data?.host?.timestamp ? (
+                  <span title={new Date(data.host.timestamp).toLocaleString()}>
+                    updated {formatAgo(data.host.timestamp)}
+                  </span>
+                ) : null}
+              </div>
             }
           />
           <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
@@ -219,6 +235,9 @@ export function App() {
             onDeleteBookmark={deleteCustomApp}
             onOpenAddApp={() => setAddAppOpen(true)}
             onViewLogs={setLogsContainer}
+            onRestartContainer={async (container) => {
+              await restartContainer(container.name || container.id);
+            }}
           />
         </section>
 
@@ -267,8 +286,17 @@ export function App() {
           onOpenChange={(open) => !open && setLogsContainer(null)}
           containerId={logsContainer.id}
           containerName={logsContainer.displayName || logsContainer.name}
+          onRestartContainer={async (id) => {
+            await restartContainer(id);
+          }}
         />
       )}
+
+      <ProcessModal
+        open={processesOpen.open}
+        onOpenChange={(open) => setProcessesOpen((prev) => ({ ...prev, open }))}
+        initialSort={processesOpen.sort}
+      />
     </div>
   );
 }

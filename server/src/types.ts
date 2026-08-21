@@ -283,3 +283,18 @@ export interface PowerCapability {
   confirmationPhrase: string;
   reason?: string;
 }
+
+/* ------------------------------------------------------------------ *
+ * Process telemetry
+ * ------------------------------------------------------------------ */
+
+export interface ProcessItem {
+  pid: number;
+  ppid?: number;
+  user: string;
+  name: string;
+  cmd: string;
+  cpuPercent: number;
+  memPercent: number;
+  memBytes: number;
+}

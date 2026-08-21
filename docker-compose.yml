@@ -6,20 +6,23 @@ services:
       dockerfile: Dockerfile
     container_name: guardian
     restart: unless-stopped
+    # Use host network mode to measure real host network interfaces (20+ MB/s download/upload stats)
+    # network_mode: host
     ports:
       - "3001:3001"
     volumes:
-      # Docker Daemon socket (auto-discovery & stats)
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Host telemetry
+      # Docker Daemon socket (auto-discovery, stats, container restart, host power controls)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Host telemetry (procfs for CPU, RAM, and top processes breakdown)
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-      # Lets Guardian report the real distro name instead of guessing
+      # Host identification (real distro name and hostname for confirmations)
       - /etc/os-release:/host/etc/os-release:ro
+      - /etc/hostname:/host/etc/hostname:ro
       # Storage monitoring — mount whatever you want measured
       - /:/host/root:ro
       - /mnt/nas:/host/mnt/nas:ro
-      # Persistent icons and URLs config
+      # Persistent icons, bookmarks, and settings config
       - guardian_data:/data
     environment:
       - HOST_PROC=/host/proc
@@ -34,10 +37,10 @@ services:
       - TAILSCALE_IP=100.94.238.9
       - PORT=3001
       - NODE_ENV=production
-      # Shutdown / reboot from the dashboard. Off unless explicitly enabled;
-      # in a container this acts on the container unless you supply a command
-      # that reaches the host via GUARDIAN_POWER_COMMAND.
-      # - ENABLE_POWER_CONTROLS=true
+      # Shutdown / reboot from the dashboard. Set to true to enable Power controls in the header.
+      # When running with Docker socket mounted, Guardian cleanly executes host power actions.
+      - ENABLE_POWER_CONTROLS=true
+      # Optional custom power command (e.g. ssh, nsenter)
       # - GUARDIAN_POWER_COMMAND=/usr/bin/ssh admin@host sudo systemctl {action}
     deploy:
       resources:

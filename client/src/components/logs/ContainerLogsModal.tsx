@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, AlertCircle, ArrowDownToLine } from 'lucide-react';
+import { RefreshCw, AlertCircle, ArrowDownToLine, RotateCcw, Loader2 } from 'lucide-react';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Input, Select } from '../ui/Input';
@@ -16,6 +16,7 @@ interface ContainerLogsModalProps {
   onOpenChange: (open: boolean) => void;
   containerId: string;
   containerName: string;
+  onRestartContainer?: (id: string) => Promise<boolean | void>;
 }
 
 const TAIL_OPTIONS = [100, 200, 500, 1000];
@@ -25,11 +26,13 @@ export function ContainerLogsModal({
   onOpenChange,
   containerId,
   containerName,
+  onRestartContainer,
 }: ContainerLogsModalProps) {
   const [lines, setLines] = useState<ContainerLogLine[]>([]);
   const [tail, setTail] = useState(200);
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(true);
+  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [follow, setFollow] = useState(true);
   const [showTimestamps, setShowTimestamps] = useState(false);
@@ -138,6 +141,32 @@ export function ContainerLogsModal({
           <ArrowDownToLine className={cn('h-3.5 w-3.5', follow && 'text-brand')} />
           {follow ? 'Following' : 'Paused'}
         </Button>
+
+        {onRestartContainer && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={restarting}
+            onClick={async () => {
+              setRestarting(true);
+              try {
+                await onRestartContainer(containerId);
+                load();
+              } finally {
+                setRestarting(false);
+              }
+            }}
+            title="Restart container"
+            aria-label="Restart container"
+          >
+            {restarting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-warn" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" />
+            )}
+            <span className="ml-1 text-xs">Restart</span>
+          </Button>
+        )}
 
         <Button variant="outline" size="icon-sm" onClick={load} title="Refresh" aria-label="Refresh logs">
           <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />

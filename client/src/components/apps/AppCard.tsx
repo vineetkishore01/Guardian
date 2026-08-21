@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2 } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import {
   resolveContainerUrl,
@@ -18,6 +18,8 @@ interface AppCardProps {
   onDeleteBookmark?: (id: string) => void;
   /** Opens the Docker log viewer. Containers only. */
   onViewLogs?: (container: ContainerItem) => void;
+  /** Restarts a Docker container. Containers only. */
+  onRestartContainer?: (container: ContainerItem) => Promise<boolean | void>;
 }
 
 const HEALTH_PRESENTATION: Record<string, { dot: string; label: string }> = {
@@ -42,9 +44,11 @@ export function AppCard({
   onEdit,
   onDeleteBookmark,
   onViewLogs,
+  onRestartContainer,
 }: AppCardProps) {
   const [imgError, setImgError] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   const container = !isCustomBookmark ? (item as ContainerItem) : null;
   const bookmark = isCustomBookmark ? (item as CustomAppBookmark) : null;
@@ -131,6 +135,30 @@ export function AppCard({
 
             {/* Actions stay visible on touch and keyboard focus, not hover-only. */}
             <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {container && onRestartContainer && (
+                <button
+                  type="button"
+                  disabled={restarting}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setRestarting(true);
+                    try {
+                      await onRestartContainer(container);
+                    } finally {
+                      setRestarting(false);
+                    }
+                  }}
+                  aria-label={`Restart ${name}`}
+                  title={restarting ? 'Restarting container…' : 'Restart container'}
+                  className={cn(
+                    'rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    restarting && 'text-warn'
+                  )}
+                >
+                  <RotateCcw className={cn('h-3.5 w-3.5', restarting && 'animate-spin')} />
+                </button>
+              )}
+
               {container && onViewLogs && (
                 <button
                   type="button"

@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import os from 'node:os';
 import { logger } from './logger.js';
+import { isDockerLive, executeHostPowerViaDocker } from './collectors/docker.js';
 import { PowerAction, PowerCapability } from './types.js';
 
 /*
@@ -15,10 +17,10 @@ import { PowerAction, PowerCapability } from './types.js';
  *      so a stray click or a curl against a memorised URL cannot fire it.
  *   3. Every attempt -- allowed or refused -- is logged.
  *
- * Mechanism is auto-detected. Inside a container none of the local options will
- * work unless the host's init system is reachable, so GUARDIAN_POWER_COMMAND
- * lets an operator supply their own escape hatch (an ssh call, a webhook shim,
- * nsenter, …).
+ * Mechanism is auto-detected:
+ *   - Custom command via GUARDIAN_POWER_COMMAND
+ *   - In Docker: host init via Docker socket helper container
+ *   - Host: systemd via systemctl or SysV shutdown
  */
 
 const ENABLED = process.env.ENABLE_POWER_CONTROLS === 'true';
@@ -32,12 +34,40 @@ const EXECUTE_DELAY_MS = 1500;
 interface Mechanism {
   id: string;
   description: string;
-  build: (action: PowerAction) => { file: string; args: string[] };
+  build?: (action: PowerAction) => { file: string; args: string[] };
+  execute?: (action: PowerAction) => Promise<void>;
 }
 
 function exists(p: string): boolean {
   try {
     return fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+/** Resolves the real host hostname if running in Docker with /host mounted, or falls back to os.hostname() */
+function resolveHostHostname(): string {
+  const hostEtc = process.env.HOST_ETC || '/host/etc';
+  for (const hostFile of [path.join(hostEtc, 'hostname'), '/host/etc/hostname', '/etc/hostname']) {
+    if (exists(hostFile)) {
+      try {
+        const name = fs.readFileSync(hostFile, 'utf-8').trim();
+        if (name) return name;
+      } catch {
+        // Continue fallback
+      }
+    }
+  }
+  return os.hostname();
+}
+
+/** True when this process looks like it is inside a container. */
+function inContainer(): boolean {
+  if (exists('/.dockerenv')) return true;
+  try {
+    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf-8');
+    return /docker|containerd|kubepods|lxc/.test(cgroup);
   } catch {
     return false;
   }
@@ -49,12 +79,23 @@ function detectMechanism(): Mechanism | null {
       id: 'custom',
       description: 'Operator-supplied command (GUARDIAN_POWER_COMMAND)',
       build: (action) => {
-        // Split on whitespace and substitute the action placeholder. Arguments
-        // are passed as an array to execFile, so nothing goes through a shell.
         const parts = CUSTOM_COMMAND.split(/\s+/).map((part) =>
           part.replace(/\{action\}/g, action === 'shutdown' ? 'poweroff' : 'reboot')
         );
         return { file: parts[0], args: parts.slice(1) };
+      },
+    };
+  }
+
+  const contained = inContainer();
+
+  // If inside container and Docker socket is live, execute via Docker host helper
+  if (contained && isDockerLive()) {
+    return {
+      id: 'docker-daemon',
+      description: 'Host init via Docker daemon socket',
+      execute: async (action: PowerAction) => {
+        await executeHostPowerViaDocker(action);
       },
     };
   }
@@ -88,17 +129,6 @@ function detectMechanism(): Mechanism | null {
   return null;
 }
 
-/** True when this process looks like it is inside a container. */
-function inContainer(): boolean {
-  if (exists('/.dockerenv')) return true;
-  try {
-    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf-8');
-    return /docker|containerd|kubepods|lxc/.test(cgroup);
-  } catch {
-    return false;
-  }
-}
-
 let cachedMechanism: Mechanism | null | undefined;
 
 function mechanism(): Mechanism | null {
@@ -112,13 +142,9 @@ export function getPowerCapability(): PowerCapability {
 
   let reason: string | undefined;
   if (!ENABLED) {
-    reason = 'Set ENABLE_POWER_CONTROLS=true to allow shutdown and reboot.';
+    reason = 'Set ENABLE_POWER_CONTROLS=true in docker-compose.yml / environment to allow shutdown and reboot.';
   } else if (!mech) {
-    reason = 'No supported power mechanism found. Set GUARDIAN_POWER_COMMAND to supply one.';
-  } else if (contained && mech.id !== 'custom') {
-    reason =
-      'Running in a container: this will act on the container, not the host. ' +
-      'Set GUARDIAN_POWER_COMMAND to reach the host instead.';
+    reason = 'No supported power mechanism found. Mount /var/run/docker.sock or set GUARDIAN_POWER_COMMAND.';
   }
 
   return {
@@ -126,8 +152,7 @@ export function getPowerCapability(): PowerCapability {
     mechanism: mech?.id ?? null,
     description: mech?.description ?? null,
     inContainer: contained,
-    // The exact string the caller has to type back.
-    confirmationPhrase: os.hostname(),
+    confirmationPhrase: resolveHostHostname(),
     reason,
   };
 }
@@ -156,37 +181,49 @@ export async function executePowerAction(
     throw new PowerError('No supported power mechanism is available.', 501);
   }
 
-  if (confirmation !== capability.confirmationPhrase) {
-    logger.warn('power', `Refused ${action}: confirmation mismatch`, { requestedBy });
+  const hostName = capability.confirmationPhrase.toLowerCase().trim();
+  const localHostName = os.hostname().toLowerCase().trim();
+  const input = confirmation.toLowerCase().trim();
+
+  if (input !== hostName && input !== localHostName) {
+    logger.warn('power', `Refused ${action}: confirmation mismatch`, { requestedBy, input });
     throw new PowerError(
       `Confirmation does not match. Type the hostname "${capability.confirmationPhrase}" to proceed.`,
       400
     );
   }
 
-  const { file, args } = mech.build(action);
   logger.warn('power', `${action} accepted, executing in ${EXECUTE_DELAY_MS}ms`, {
     requestedBy,
     mechanism: mech.id,
-    command: [file, ...args].join(' '),
   });
   logger.save();
 
   // Fire after the response has been flushed.
-  const timer = setTimeout(() => {
-    execFile(file, args, { timeout: 15000 }, (err, stdout, stderr) => {
-      if (err) {
-        logger.error('power', `${action} command failed`, {
-          message: err.message,
-          stderr: String(stderr).slice(0, 500),
-        });
-        logger.save();
-      } else {
-        logger.info('power', `${action} command issued`, {
-          stdout: String(stdout).slice(0, 500),
+  const timer = setTimeout(async () => {
+    try {
+      if (mech.execute) {
+        await mech.execute(action);
+        logger.info('power', `${action} executed via ${mech.id}`);
+      } else if (mech.build) {
+        const { file, args } = mech.build(action);
+        execFile(file, args, { timeout: 15000 }, (err, stdout, stderr) => {
+          if (err) {
+            logger.error('power', `${action} command failed`, {
+              message: err.message,
+              stderr: String(stderr).slice(0, 500),
+            });
+            logger.save();
+          } else {
+            logger.info('power', `${action} command issued`, {
+              stdout: String(stdout).slice(0, 500),
+            });
+          }
         });
       }
-    });
+    } catch (err) {
+      logger.error('power', `Execution of ${action} failed: ${(err as Error).message}`);
+    }
   }, EXECUTE_DELAY_MS);
   timer.unref?.();
 

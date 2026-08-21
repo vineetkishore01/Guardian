@@ -10,8 +10,8 @@ import {
   isMetricKey,
   severityForMetric,
 } from '../lib/metrics';
-import { MetricKey, HistoryRange, HistorySeries } from '../types/dashboard';
-import { cn, severityTextClass, formatAgo } from '../lib/utils';
+import { MetricKey, HistoryRange, HistorySeries, ProcessItem } from '../types/dashboard';
+import { cn, severityTextClass, formatAgo, formatBytes } from '../lib/utils';
 
 interface MetricDetailPageProps {
   metric: string;
@@ -50,6 +50,7 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
   const [range, setRange] = useState<HistoryRange>('24h');
   const [primary, setPrimary] = useState<HistoryResponse | null>(null);
   const [companion, setCompanion] = useState<HistoryResponse | null>(null);
+  const [processes, setProcesses] = useState<ProcessItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,14 +65,25 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
     try {
       const requests = [fetch(`/api/history/${metric}?range=${range}`)];
       if (companionKey) requests.push(fetch(`/api/history/${companionKey}?range=${range}`));
+      if (metric === 'cpu' || metric === 'ram') {
+        const procSort = metric === 'cpu' ? 'cpu' : 'mem';
+        requests.push(fetch(`/api/processes?sort=${procSort}&limit=10`));
+      }
 
       const responses = await Promise.all(requests);
       for (const res of responses) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
       }
-      const [main, extra] = await Promise.all(responses.map((r) => r.json()));
-      setPrimary(main);
-      setCompanion(extra ?? null);
+      const jsonResults = await Promise.all(responses.map((r) => r.json()));
+      setPrimary(jsonResults[0]);
+      let idx = 1;
+      if (companionKey) {
+        setCompanion(jsonResults[idx++] ?? null);
+      }
+      if (metric === 'cpu' || metric === 'ram') {
+        const procData = jsonResults[idx];
+        setProcesses(Array.isArray(procData?.processes) ? procData.processes : []);
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -232,6 +244,63 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
           }
         />
       </section>
+
+      {/* Top Consuming Processes breakdown for CPU and RAM */}
+      {(metric === 'cpu' || metric === 'ram') && processes.length > 0 && (
+        <section className="surface mt-4 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-foreground">
+              Top Processes consuming {metric === 'cpu' ? 'CPU' : 'Memory'}
+            </h2>
+            <span className="text-2xs text-muted-foreground">Live top {processes.length}</span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-border text-2xs text-muted-foreground">
+                <tr>
+                  <th scope="col" className="py-2 font-medium">PID</th>
+                  <th scope="col" className="py-2 font-medium">Process / Command</th>
+                  <th scope="col" className="py-2 font-medium">User</th>
+                  <th scope="col" className="py-2 text-right font-medium">CPU</th>
+                  <th scope="col" className="py-2 text-right font-medium">RAM</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {processes.map((proc) => {
+                  const highCpu = proc.cpuPercent >= 50;
+                  const medCpu = proc.cpuPercent >= 15;
+                  const highMem = proc.memPercent >= 30;
+
+                  return (
+                    <tr key={proc.pid} className="hover:bg-muted/30">
+                      <td className="py-2 font-mono text-2xs text-muted-foreground">{proc.pid}</td>
+                      <td className="max-w-[20rem] truncate py-2 sm:max-w-md">
+                        <span className="font-medium text-foreground">{proc.name}</span>
+                        <p className="truncate font-mono text-2xs text-muted-foreground" title={proc.cmd}>
+                          {proc.cmd}
+                        </p>
+                      </td>
+                      <td className="py-2 font-mono text-2xs text-muted-foreground">{proc.user}</td>
+                      <td className="py-2 text-right font-mono">
+                        <span className={cn('tabular font-medium', highCpu ? 'text-crit' : medCpu ? 'text-warn' : 'text-foreground')}>
+                          {proc.cpuPercent.toFixed(1)}%
+                        </span>
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        <span className={cn('tabular font-medium', highMem ? 'text-warn' : 'text-foreground')}>
+                          {formatBytes(proc.memBytes, 0)}
+                        </span>
+                        <span className="ml-1 text-2xs text-muted-foreground">({proc.memPercent.toFixed(0)}%)</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* A table view keeps the data reachable without relying on colour. */}
       {primary && primary.points.length > 0 && (

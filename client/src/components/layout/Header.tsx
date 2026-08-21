@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Settings, Plus, Trash2, Sun, Moon } from 'lucide-react';
+import { Shield, Settings, Plus, Trash2, Sun, Moon, Activity } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PowerMenu } from './PowerMenu';
 import { HostTelemetry, DashboardSettings, DockerSystemDf } from '../../types/dashboard';
@@ -14,6 +14,7 @@ interface HeaderProps {
   onToggleTheme: () => void;
   onOpenSettings: () => void;
   onOpenAddApp: () => void;
+  onOpenProcesses?: () => void;
   onChangeHostMode: (mode: DashboardSettings['defaultHostMode']) => void;
 }
 
@@ -28,6 +29,7 @@ export function Header({
   onToggleTheme,
   onOpenSettings,
   onOpenAddApp,
+  onOpenProcesses,
   onChangeHostMode,
 }: HeaderProps) {
   const currentMode = settings?.defaultHostMode || 'auto';
@@ -151,6 +153,18 @@ export function Header({
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             <span className="hidden sm:inline">Add</span>
           </Button>
+
+          {onOpenProcesses && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onOpenProcesses}
+              title="Host processes (CPU & RAM)"
+              aria-label="Host processes"
+            >
+              <Activity className="h-4 w-4" />
+            </Button>
+          )}
 
           <Button
             variant="ghost"

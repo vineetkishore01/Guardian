@@ -77,7 +77,6 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
         value={cpuUsage.toFixed(1)}
         unit="%"
         severity={cpuSeverity}
-        percent={cpuUsage}
         trend={history.map((h) => h.cpu)}
         trendMin={0}
         trendMax={100}
