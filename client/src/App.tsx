@@ -73,7 +73,13 @@ export function App() {
     document.title = title ? `${title} — Guardian` : 'Guardian — Server Dashboard';
   }, [data?.config?.settings?.title]);
 
-  const disks = data?.host?.disks;
+  const disks = useMemo(() => {
+    return (data?.host?.disks || []).filter(
+      (d) =>
+        !/^\/(boot|efi)(\/|$)/i.test(d.mountPoint) &&
+        !/^(efi|boot)$/i.test(d.label || '')
+    );
+  }, [data?.host?.disks]);
 
   // Every summary below is derived from live telemetry. The previous build
   // printed fixed strings ("94% full", "16 Containers") that stayed put no

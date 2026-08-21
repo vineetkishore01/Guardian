@@ -21,6 +21,9 @@ const PSEUDO_FS = new Set([
   'nsfs', 'rpc_pipefs',
 ]);
 
+/** Paths that are internal bootloader or container runtime mounts and not user storage. */
+const IGNORED_MOUNT_REGEX = /^\/(boot|efi)(\/|$)|^\/var\/(lib|snap)\/|\/docker/i;
+
 interface MountInfo {
   mountPoint: string;
   device: string;
@@ -44,6 +47,7 @@ function readProcMounts(): Map<string, MountInfo> {
       if (PSEUDO_FS.has(fsType)) continue;
       // Octal escapes for spaces and friends, as written by the kernel.
       const decoded = mountPoint.replace(/\\040/g, ' ').replace(/\\011/g, '\t');
+      if (IGNORED_MOUNT_REGEX.test(decoded)) continue;
       result.set(decoded, { mountPoint: decoded, device, fsType });
     }
   } catch {
@@ -95,7 +99,14 @@ export function collectDiskUsage(): DiskMount[] {
 
   for (const mountPoint of candidates) {
     try {
+      if (IGNORED_MOUNT_REGEX.test(mountPoint)) continue;
       if (!fs.existsSync(mountPoint)) continue;
+
+      const hostPath = toHostPath(mountPoint);
+      if (IGNORED_MOUNT_REGEX.test(hostPath)) continue;
+
+      const label = labelFor(hostPath);
+      if (label === 'Efi' || label === 'Boot') continue;
 
       const stat = fs.statfsSync(mountPoint);
       const totalBytes = Number(stat.bsize) * Number(stat.blocks);
@@ -108,8 +119,8 @@ export function collectDiskUsage(): DiskMount[] {
       const usedPercent = Math.round((usedBytes / totalBytes) * 1000) / 10;
 
       // Look the mount up under the name the host uses for it.
-      const hostPath = toHostPath(mountPoint);
       const info = procMounts.get(hostPath) ?? procMounts.get(mountPoint);
+      if (info?.fsType === 'vfat' && totalBytes < 2 * 1024 * 1024 * 1024) continue;
 
       // Bind mounts and snapshots of the same device would otherwise appear
       // several times over.
@@ -120,7 +131,7 @@ export function collectDiskUsage(): DiskMount[] {
       mounts.push({
         // Report the host's path — that is what the operator recognises.
         mountPoint: hostPath,
-        label: labelFor(hostPath),
+        label,
         device: info?.device ?? '',
         fsType: info?.fsType ?? '',
         totalBytes,

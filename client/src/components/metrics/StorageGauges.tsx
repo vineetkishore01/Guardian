@@ -17,7 +17,13 @@ const STATUS_LABEL = {
 } as const;
 
 export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps) {
-  if (disks.length === 0) {
+  const visibleDisks = disks.filter(
+    (d) =>
+      !/^\/(boot|efi)(\/|$)/i.test(d.mountPoint) &&
+      !/^(efi|boot)$/i.test(d.label || '')
+  );
+
+  if (visibleDisks.length === 0) {
     return (
       <div className="surface p-6 text-center text-xs text-muted-foreground">
         No mounted filesystems reported.
@@ -28,8 +34,8 @@ export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps)
   return (
     // A lone volume takes the full width rather than sitting in a two-column
     // grid with an empty cell beside it.
-    <div className={`grid grid-cols-1 gap-3 ${disks.length > 1 ? 'md:grid-cols-2' : ''}`}>
-      {disks.map((disk) => {
+    <div className={`grid grid-cols-1 gap-3 ${visibleDisks.length > 1 ? 'md:grid-cols-2' : ''}`}>
+      {visibleDisks.map((disk) => {
         // Derive severity from the number rather than trusting a flag computed
         // upstream, so the badge, bar and figure can never disagree.
         const severity = severityFor(disk.usedPercent, 80, 90);
