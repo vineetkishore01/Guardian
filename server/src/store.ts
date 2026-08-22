@@ -102,7 +102,7 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   // rather than advertising one particular homelab's addresses.
   lanIp: process.env.SERVER_IP || '',
   tailscaleIp: process.env.TAILSCALE_IP || '',
-  refreshIntervalSec: 15,
+  refreshIntervalSec: 5,
   title: 'Guardian Dashboard',
 };
 
@@ -320,7 +320,7 @@ export function sanitizeSettings(body: unknown): Partial<DashboardSettings> | nu
     // Clamped here as well as in the server loop, so a bad value can never be
     // persisted in the first place.
     refreshIntervalSec: Number.isFinite(interval)
-      ? Math.min(300, Math.max(5, Math.round(interval)))
+      ? Math.min(300, Math.max(2, Math.round(interval)))
       : undefined,
   });
 }

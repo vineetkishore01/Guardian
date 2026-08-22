@@ -207,7 +207,9 @@ export function SettingsModal({
             onChange={(e) => setRefreshInterval(Number(e.target.value))}
             className="h-9 w-full"
           >
-            <option value={5}>5 seconds</option>
+            <option value={2}>2 seconds (ultra-responsive)</option>
+            <option value={3}>3 seconds</option>
+            <option value={5}>5 seconds (recommended)</option>
             <option value={10}>10 seconds</option>
             <option value={15}>15 seconds</option>
             <option value={30}>30 seconds</option>

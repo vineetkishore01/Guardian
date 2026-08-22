@@ -99,16 +99,20 @@ export function useLiveTelemetry() {
       if (!connectedRef.current) fetchStatus();
     }, FALLBACK_POLL_MS);
 
-    // Refresh immediately when the user returns to a stale tab.
+    // Refresh immediately when the user returns to the tab or window.
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && !connectedRef.current) fetchStatus();
+      if (document.visibilityState === 'visible') {
+        fetchStatus();
+      }
     };
     document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
       es?.close();
     };
   }, [fetchStatus, applyState]);

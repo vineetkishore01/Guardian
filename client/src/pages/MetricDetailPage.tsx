@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { ArrowLeft, RefreshCw, AlertCircle, ArrowDown, ArrowUp } from 'lucide-react';
+import { ArrowLeft, RefreshCw, AlertCircle, ArrowDown, ArrowUp, Thermometer, Fan, HardDrive, Cpu } from 'lucide-react';
 import { TimeSeriesChart, ChartSeries } from '../components/charts/TimeSeriesChart';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -10,11 +10,13 @@ import {
   isMetricKey,
   severityForMetric,
 } from '../lib/metrics';
-import { MetricKey, HistoryRange, HistorySeries, ProcessItem } from '../types/dashboard';
-import { cn, severityTextClass, formatAgo, formatBytes, formatRate } from '../lib/utils';
+import { MetricKey, HistoryRange, HistorySeries, ProcessItem, HostTelemetry, HistoryPoint } from '../types/dashboard';
+import { cn, severityTextClass, formatAgo, formatBytes, formatRate, severityFor } from '../lib/utils';
 
 interface MetricDetailPageProps {
   metric: string;
+  liveHost?: HostTelemetry;
+  liveHistory?: HistoryPoint[];
   onBack: () => void;
 }
 
@@ -28,6 +30,42 @@ const COMPANION: Partial<Record<MetricKey, MetricKey>> = {
   netTx: 'netRx',
   ram: 'swap',
 };
+
+function getLiveMetricValue(metric: MetricKey, host?: HostTelemetry): number | undefined {
+  if (!host) return undefined;
+  switch (metric) {
+    case 'cpu':
+      return host.cpu.usagePercent;
+    case 'ram':
+      return host.memory.usedPercent;
+    case 'swap':
+      return host.memory.swapTotalBytes > 0 ? host.memory.swapPercent : 0;
+    case 'temp': {
+      const primaryThermal =
+        host.thermals.find((t) => /pkg|package|cpu|tctl|core/i.test(t.label)) || host.thermals[0];
+      return primaryThermal ? primaryThermal.tempC : undefined;
+    }
+    case 'netRx': {
+      const primaryNet =
+        host.network.find((n) => !/^(docker|veth|br-|virbr|lo|tun|tap|wg|tailscale|zt|ham|nebula|cni|flannel|kube|dummy|ifb|sit|gre)/.test(n.name)) ||
+        host.network[0];
+      return primaryNet ? primaryNet.rxBytesPerSec : 0;
+    }
+    case 'netTx': {
+      const primaryNet =
+        host.network.find((n) => !/^(docker|veth|br-|virbr|lo|tun|tap|wg|tailscale|zt|ham|nebula|cni|flannel|kube|dummy|ifb|sit|gre)/.test(n.name)) ||
+        host.network[0];
+      return primaryNet ? primaryNet.txBytesPerSec : 0;
+    }
+    case 'disk': {
+      const disks = host.disks || [];
+      if (disks.length === 0) return undefined;
+      return disks.reduce((worst, d) => (d.usedPercent > worst ? d.usedPercent : worst), 0);
+    }
+    default:
+      return undefined;
+  }
+}
 
 function StatBlock({
   label,
@@ -46,7 +84,7 @@ function StatBlock({
   );
 }
 
-export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
+export function MetricDetailPage({ metric, liveHost, onBack }: MetricDetailPageProps) {
   const [range, setRange] = useState<HistoryRange>('24h');
   const [primary, setPrimary] = useState<HistoryResponse | null>(null);
   const [companion, setCompanion] = useState<HistoryResponse | null>(null);
@@ -58,6 +96,16 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
   const def = valid ? METRIC_DEFINITIONS[metric as MetricKey] : null;
   const companionKey = valid ? COMPANION[metric as MetricKey] : undefined;
   const companionDef = companionKey ? METRIC_DEFINITIONS[companionKey] : null;
+
+  const liveValue = useMemo(() => {
+    if (!valid || !liveHost) return undefined;
+    return getLiveMetricValue(metric as MetricKey, liveHost);
+  }, [valid, metric, liveHost]);
+
+  const companionLiveValue = useMemo(() => {
+    if (!companionKey || !liveHost) return undefined;
+    return getLiveMetricValue(companionKey, liveHost);
+  }, [companionKey, liveHost]);
 
   const load = useCallback(async () => {
     if (!valid) return;
@@ -98,7 +146,7 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
 
   // Keep the view live, matched loosely to the resolution being shown.
   useEffect(() => {
-    const periodMs = range === '1h' || range === '6h' ? 30_000 : 120_000;
+    const periodMs = range === '1h' || range === '6h' ? 15_000 : 60_000;
     const id = window.setInterval(() => {
       if (document.visibilityState === 'visible') load();
     }, periodMs);
@@ -107,19 +155,41 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
 
   const chartSeries = useMemo<ChartSeries[]>(() => {
     if (!primary || !def) return [];
+
+    let primaryPoints = primary.points;
+    if (liveHost?.timestamp && liveValue !== undefined) {
+      const lastPoint = primaryPoints[primaryPoints.length - 1];
+      if (!lastPoint || liveHost.timestamp > lastPoint.t) {
+        primaryPoints = [...primaryPoints, { t: liveHost.timestamp, v: liveValue }];
+      } else if (lastPoint && Math.abs(liveHost.timestamp - lastPoint.t) < 10000) {
+        primaryPoints = [...primaryPoints.slice(0, -1), { t: liveHost.timestamp, v: liveValue }];
+      }
+    }
+
     const list: ChartSeries[] = [
-      { id: def.key, label: def.label, points: primary.points, color: 'var(--viz-1)' },
+      { id: def.key, label: def.label, points: primaryPoints, color: 'var(--viz-1)' },
     ];
+
     if (companion && companionDef) {
+      let companionPoints = companion.points;
+      if (liveHost?.timestamp && companionLiveValue !== undefined) {
+        const lastPoint = companionPoints[companionPoints.length - 1];
+        if (!lastPoint || liveHost.timestamp > lastPoint.t) {
+          companionPoints = [...companionPoints, { t: liveHost.timestamp, v: companionLiveValue }];
+        } else if (lastPoint && Math.abs(liveHost.timestamp - lastPoint.t) < 10000) {
+          companionPoints = [...companionPoints.slice(0, -1), { t: liveHost.timestamp, v: companionLiveValue }];
+        }
+      }
+
       list.push({
         id: companionDef.key,
         label: companionDef.label,
-        points: companion.points,
+        points: companionPoints,
         color: 'var(--viz-2)',
       });
     }
     return list;
-  }, [primary, companion, def, companionDef]);
+  }, [primary, companion, def, companionDef, liveHost?.timestamp, liveValue, companionLiveValue]);
 
   if (!valid || !def) {
     return (
@@ -133,7 +203,8 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
   }
 
   const stats = primary?.stats ?? null;
-  const severity = stats ? severityForMetric(def, stats.latest) : 'ok';
+  const currentVal = liveValue !== undefined ? liveValue : stats?.latest;
+  const severity = currentVal !== undefined ? severityForMetric(def, currentVal) : (stats ? severityForMetric(def, stats.latest) : 'ok');
 
   /*
    * Y-axis ceiling.
@@ -210,7 +281,7 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatBlock
           label="Current"
-          value={stats ? def.format(stats.latest) : '—'}
+          value={currentVal !== undefined ? def.format(currentVal) : '—'}
           tone={severityTextClass(severity)}
         />
         <StatBlock label="Average" value={stats ? def.format(stats.avg) : '—'} />
@@ -244,6 +315,122 @@ export function MetricDetailPage({ metric, onBack }: MetricDetailPageProps) {
           }
         />
       </section>
+
+      {/* Live Hardware Thermal Sensors breakdown when viewing Temperature */}
+      {metric === 'temp' && (
+        <section className="surface mt-4 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-foreground">
+              Hardware Thermal Sensors &amp; Cooling
+            </h2>
+            <span className="text-2xs text-muted-foreground">Live sensor readings</span>
+          </div>
+
+          {liveHost?.thermals && liveHost.thermals.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="border-b border-border text-2xs text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="py-2 font-medium">Sensor Label</th>
+                    <th scope="col" className="py-2 font-medium">Device / Path</th>
+                    <th scope="col" className="py-2 text-right font-medium">Temperature</th>
+                    <th scope="col" className="py-2 text-right font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {liveHost.thermals.map((sensor) => {
+                    const tempSev = sensor.isCritical ? 'crit' : severityFor(sensor.tempC, 75, 85);
+                    return (
+                      <tr key={sensor.name} className="hover:bg-muted/30">
+                        <td className="py-2">
+                          <span className="font-medium text-foreground flex items-center gap-1.5">
+                            <Thermometer className="h-3.5 w-3.5 text-muted-foreground" />
+                            {sensor.label}
+                          </span>
+                        </td>
+                        <td className="py-2 font-mono text-2xs text-muted-foreground">
+                          {sensor.name}
+                        </td>
+                        <td className="py-2 text-right font-mono">
+                          <span className={cn('tabular font-semibold', severityTextClass(tempSev))}>
+                            {sensor.tempC.toFixed(1)}°C
+                          </span>
+                        </td>
+                        <td className="py-2 text-right">
+                          <Badge variant={sensor.isCritical ? 'crit' : tempSev === 'warn' ? 'warn' : 'ok'}>
+                            {sensor.isCritical ? 'Critical' : tempSev === 'warn' ? 'Warm' : 'Normal'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {/* Also list GPU temperatures if present */}
+                  {liveHost.gpu?.map((gpu) => (
+                    <tr key={`gpu-${gpu.id}`} className="hover:bg-muted/30">
+                      <td className="py-2">
+                        <span className="font-medium text-foreground flex items-center gap-1.5">
+                          <Cpu className="h-3.5 w-3.5 text-muted-foreground" />
+                          GPU {gpu.name}
+                        </span>
+                      </td>
+                      <td className="py-2 font-mono text-2xs text-muted-foreground">
+                        {gpu.driver || 'GPU Driver'}
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        <span className={cn('tabular font-semibold', gpu.temperatureC ? severityTextClass(severityFor(gpu.temperatureC, 75, 85)) : 'text-muted-foreground')}>
+                          {gpu.temperatureC !== undefined ? `${gpu.temperatureC.toFixed(1)}°C` : '—'}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right">
+                        <Badge variant="outline">GPU</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                  {/* Also list Disk temperatures if present */}
+                  {liveHost.disks?.filter((d) => d.tempC !== undefined).map((disk) => (
+                    <tr key={`disk-${disk.mountPoint}`} className="hover:bg-muted/30">
+                      <td className="py-2">
+                        <span className="font-medium text-foreground flex items-center gap-1.5">
+                          <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
+                          Disk {disk.label || disk.mountPoint}
+                        </span>
+                      </td>
+                      <td className="py-2 font-mono text-2xs text-muted-foreground">
+                        {disk.device || disk.mountPoint}
+                      </td>
+                      <td className="py-2 text-right font-mono">
+                        <span className={cn('tabular font-semibold', disk.tempC ? severityTextClass(severityFor(disk.tempC, 50, 60)) : 'text-muted-foreground')}>
+                          {disk.tempC !== undefined ? `${disk.tempC.toFixed(1)}°C` : '—'}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right">
+                        <Badge variant="outline">Storage</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">No hardware thermal sensors detected under /sys/class/hwmon or /sys/class/thermal.</p>
+          )}
+
+          {liveHost?.fans && liveHost.fans.length > 0 && (
+            <div className="mt-4 border-t border-border/60 pt-3">
+              <h3 className="text-2xs font-medium text-muted-foreground mb-2">Cooling Fans</h3>
+              <div className="flex flex-wrap gap-4">
+                {liveHost.fans.map((fan) => (
+                  <div key={fan.name} className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5 text-xs">
+                    <Fan className={cn('h-3.5 w-3.5 text-muted-foreground', fan.rpm > 0 && 'animate-spin')} />
+                    <span className="font-medium text-foreground">{fan.label}</span>
+                    <span className="font-mono text-muted-foreground">{fan.rpm} RPM</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Top Consuming Processes breakdown for CPU, RAM, and Network */}
       {(metric === 'cpu' || metric === 'ram' || metric === 'netRx' || metric === 'netTx') && processes.length > 0 && (

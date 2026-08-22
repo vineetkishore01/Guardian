@@ -137,6 +137,8 @@ export function App() {
       {route.name === 'metric' ? (
         <MetricDetailPage
           metric={route.metric}
+          liveHost={data?.host}
+          liveHistory={data?.history}
           onBack={() => navigate({ name: 'dashboard' })}
         />
       ) : (

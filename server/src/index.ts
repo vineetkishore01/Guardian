@@ -57,7 +57,7 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3001', 10);
 const HOST = process.env.BIND_HOST || '0.0.0.0';
 
-const MIN_INTERVAL_MS = 5000;
+const MIN_INTERVAL_MS = 2000;
 const MAX_INTERVAL_MS = 300000;
 const SSE_HEARTBEAT_MS = 20000;
 
@@ -225,7 +225,7 @@ function broadcastSSE(data: unknown): void {
 }
 
 function resolveIntervalMs(): number {
-  const configured = (loadUserConfig().settings.refreshIntervalSec || 15) * 1000;
+  const configured = (loadUserConfig().settings.refreshIntervalSec || 5) * 1000;
   return Math.min(MAX_INTERVAL_MS, Math.max(MIN_INTERVAL_MS, configured));
 }
 
