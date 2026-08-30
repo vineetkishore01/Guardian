@@ -137,6 +137,7 @@ async function fetchJellyfinWidget(baseUrl: string, apiKey?: string): Promise<Ap
       Client?: string;
       NowPlayingItem?: { Name?: string; SeriesName?: string; Type?: string };
       PlayState?: { IsPaused?: boolean; PlayMethod?: string };
+      TranscodingInfo?: { HardwareAccelerationType?: string; TranscodeReasons?: string[] };
     }>
   >(`${baseUrl}/Sessions`, headers);
 
@@ -144,7 +145,20 @@ async function fetchJellyfinWidget(baseUrl: string, apiKey?: string): Promise<Ap
   const count = playing.length;
 
   const isTranscode = (s: (typeof playing)[number]) => s.PlayState?.PlayMethod === 'Transcode';
-  const transcoding = playing.filter(isTranscode).length;
+  /*
+   * A hardware transcode runs on the iGPU and costs the CPU almost nothing; a
+   * software one re-encodes on the CPU and will bury a low-power host. Treating
+   * both as equally alarming trains you to ignore the badge, so they are
+   * counted and coloured separately.
+   */
+  const isHwTranscode = (s: (typeof playing)[number]) => {
+    const accel = (s.TranscodingInfo?.HardwareAccelerationType || '').toLowerCase();
+    return accel !== '' && accel !== 'none';
+  };
+  const transcodes = playing.filter(isTranscode);
+  const transcoding = transcodes.length;
+  const swTranscoding = transcodes.filter((s) => !isHwTranscode(s)).length;
+  const hwTranscoding = transcoding - swTranscoding;
   const direct = count - transcoding;
 
   // "alice - The Bear S03E01" / "bob - Dune (paused)"
@@ -154,27 +168,36 @@ async function fetchJellyfinWidget(baseUrl: string, apiKey?: string): Promise<Ap
     const who = s.UserName || 'unknown';
     const flags: string[] = [];
     if (s.PlayState?.IsPaused) flags.push('paused');
-    if (isTranscode(s)) flags.push('transcoding');
+    if (isTranscode(s)) flags.push(isHwTranscode(s) ? 'hw transcode' : 'SW transcode');
     return `${who} - ${title}${flags.length ? ` (${flags.join(', ')})` : ''}`;
   };
 
   const metrics: Array<{ label: string; value: string | number }> = [
     { label: 'Watching', value: count },
     { label: 'Direct', value: direct },
-    { label: 'Transcoding', value: transcoding },
+    { label: 'HW transcode', value: hwTranscoding },
+    { label: 'SW transcode', value: swTranscoding },
   ];
-  // One row per viewer, so the dashboard answers "who" without opening Jellyfin.
-  for (const s of playing.slice(0, 4)) {
-    metrics.push({ label: s.UserName || 'unknown', value: describe(s).replace(/^[^-]+ - /, '') });
-  }
-
   return {
     type: 'media',
     title: 'Jellyfin',
-    badge: transcoding > 0 ? `${transcoding} Transcoding` : count === 1 ? '1 Watching' : `${count} Watching`,
-    badgeColor: transcoding > 0 ? 'crit' : count > 0 ? 'ok' : 'muted',
+    badge:
+      swTranscoding > 0
+        ? `${swTranscoding} SW Transcode`
+        : hwTranscoding > 0
+          ? `${hwTranscoding} HW Transcode`
+          : count === 1
+            ? '1 Watching'
+            : `${count} Watching`,
+    // Only a software transcode is worth escalating; hardware is business as usual.
+    badgeColor: swTranscoding > 0 ? 'crit' : hwTranscoding > 0 ? 'warn' : count > 0 ? 'ok' : 'muted',
     subtitle: count > 0 ? playing.map(describe).join(' · ') : 'Idle',
-    statusText: transcoding > 0 ? 'Transcoding - CPU is re-encoding in real time' : undefined,
+    statusText:
+      swTranscoding > 0
+        ? 'Software transcode - re-encoding on the CPU'
+        : hwTranscoding > 0
+          ? 'Hardware transcode - offloaded to the GPU'
+          : undefined,
     metrics,
     updatedAt: Date.now(),
   };
@@ -337,10 +360,6 @@ async function fetchArrWidget(baseUrl: string, apiKey: string | undefined, label
   ];
   if (totalSize > 0) metrics.push({ label: 'Progress', value: `${pct}%` });
   if (warnings >= 0) metrics.push({ label: 'Health', value: warnings === 0 ? 'OK' : `${warnings} warning(s)` });
-  for (const r of records.slice(0, 3)) {
-    if (r.title) metrics.push({ label: r.status || 'queued', value: r.title.slice(0, 60) });
-  }
-
   const badgeColor: AppWidgetData['badgeColor'] =
     problems > 0 ? 'crit' : warnings > 0 ? 'warn' : downloading > 0 ? 'brand' : 'muted';
 

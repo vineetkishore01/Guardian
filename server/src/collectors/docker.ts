@@ -131,6 +131,9 @@ interface RawDockerStats {
   };
   networks?: Record<string, { rx_bytes?: number; tx_bytes?: number }>;
   network?: { rx_bytes?: number; tx_bytes?: number };
+  blkio_stats?: {
+    io_service_bytes_recursive?: Array<{ op?: string; value?: number }> | null;
+  };
 }
 
 interface RawDockerSystemDf {
@@ -163,6 +166,10 @@ interface CachedStat {
   networkTxBytesPerSec?: number;
   rawRxBytes?: number;
   rawTxBytes?: number;
+  blockReadBytesPerSec?: number;
+  blockWriteBytesPerSec?: number;
+  rawBlockRead?: number;
+  rawBlockWrite?: number;
   timestamp: number;
 }
 
@@ -220,8 +227,33 @@ function computeStat(raw: RawDockerStats, now: number, prev?: CachedStat): Cache
     }
   }
 
+  /*
+   * Block I/O comes from the same stats frame the stream already delivers, so
+   * this costs no extra Docker calls. Counters are cumulative for the life of
+   * the container, hence the same delta treatment as the network figures.
+   */
+  let rawBlockRead = 0;
+  let rawBlockWrite = 0;
+  let hasBlk = false;
+  for (const e of raw.blkio_stats?.io_service_bytes_recursive || []) {
+    const op = (e.op || '').toLowerCase();
+    if (e.value === undefined) continue;
+    if (op === 'read') { rawBlockRead += e.value; hasBlk = true; }
+    else if (op === 'write') { rawBlockWrite += e.value; hasBlk = true; }
+  }
+
   let networkRxBytesPerSec = prev?.networkRxBytesPerSec;
   let networkTxBytesPerSec = prev?.networkTxBytesPerSec;
+  let blockReadBytesPerSec = prev?.blockReadBytesPerSec;
+  let blockWriteBytesPerSec = prev?.blockWriteBytesPerSec;
+
+  if (hasBlk && prev && prev.rawBlockRead !== undefined && prev.rawBlockWrite !== undefined && now > prev.timestamp) {
+    const deltaSec = (now - prev.timestamp) / 1000;
+    if (deltaSec > 0) {
+      blockReadBytesPerSec = Math.max(0, Math.round((rawBlockRead - prev.rawBlockRead) / deltaSec));
+      blockWriteBytesPerSec = Math.max(0, Math.round((rawBlockWrite - prev.rawBlockWrite) / deltaSec));
+    }
+  }
 
   if (hasNet && prev && prev.rawRxBytes !== undefined && prev.rawTxBytes !== undefined && now > prev.timestamp) {
     const deltaSec = (now - prev.timestamp) / 1000;
@@ -239,6 +271,10 @@ function computeStat(raw: RawDockerStats, now: number, prev?: CachedStat): Cache
     networkTxBytesPerSec,
     rawRxBytes: hasNet ? rawRxBytes : undefined,
     rawTxBytes: hasNet ? rawTxBytes : undefined,
+    blockReadBytesPerSec,
+    blockWriteBytesPerSec,
+    rawBlockRead: hasBlk ? rawBlockRead : undefined,
+    rawBlockWrite: hasBlk ? rawBlockWrite : undefined,
     timestamp: now,
   };
 }
@@ -529,6 +565,8 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
         cpuPercent: liveStat?.cpuPercent,
         memoryBytes: liveStat?.memoryBytes,
         memoryLimitBytes: liveStat?.memoryLimitBytes,
+        blockReadBytesPerSec: liveStat?.blockReadBytesPerSec,
+        blockWriteBytesPerSec: liveStat?.blockWriteBytesPerSec,
         networkRxBytesPerSec: liveStat?.networkRxBytesPerSec,
         networkTxBytesPerSec: liveStat?.networkTxBytesPerSec,
         statAgeMs: liveStat ? Date.now() - liveStat.timestamp : undefined,

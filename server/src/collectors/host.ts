@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle } from '../types.js';
+import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle, BatteryTelemetry, DiskIo } from '../types.js';
 
 const PROC_DIR = process.env.HOST_PROC || '/proc';
 const SYS_DIR = process.env.HOST_SYS || '/sys';
@@ -234,6 +234,128 @@ function parseUptime(): { seconds: number; formatted: string } {
   parts.push(`${minutes}m`);
 
   return { seconds: sec, formatted: parts.join(' ') || '0m' };
+}
+
+/**
+ * Battery and mains state.
+ *
+ * A laptop running as a server has a UPS bolted to it; the useful signal is
+ * simply whether mains is still present. Runtime estimation needs `energy_now`
+ * and `power_now`, which plenty of firmware (including this host's) omits, so
+ * it is reported only when the kernel actually supplies the inputs.
+ */
+function parseBattery(): BatteryTelemetry | undefined {
+  const psDir = path.join(SYS_DIR, 'class/power_supply');
+  let entries: string[];
+  try {
+    if (!fs.existsSync(psDir)) return undefined;
+    entries = fs.readdirSync(psDir);
+  } catch {
+    return undefined;
+  }
+  if (entries.length === 0) return undefined;
+
+  const read = (dir: string, f: string) => safeReadFile(path.join(psDir, dir, f))?.trim() || undefined;
+  const num = (dir: string, f: string) => {
+    const v = read(dir, f);
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  let onMains = true;
+  let mainsSeen = false;
+  let battery: string | undefined;
+
+  for (const e of entries) {
+    const type = read(e, 'type');
+    if (type === 'Mains') {
+      mainsSeen = true;
+      // Any online adapter counts as "on mains".
+      if (num(e, 'online') === 1) onMains = true;
+      else if (!entries.some((o) => read(o, 'type') === 'Mains' && num(o, 'online') === 1)) onMains = false;
+    } else if (type === 'Battery' && read(e, 'present') !== '0') {
+      battery = e;
+    }
+  }
+  if (!battery && !mainsSeen) return undefined;
+  if (!battery) return { present: false, onMains };
+
+  // Only computable when the firmware exposes energy and draw.
+  let minutesRemaining: number | undefined;
+  const energyNow = num(battery, 'energy_now') ?? num(battery, 'charge_now');
+  const powerNow = num(battery, 'power_now') ?? num(battery, 'current_now');
+  if (energyNow !== undefined && powerNow !== undefined && powerNow > 0 && !onMains) {
+    minutesRemaining = Math.round((energyNow / powerNow) * 60);
+  }
+
+  return {
+    present: true,
+    onMains,
+    chargePercent: num(battery, 'capacity'),
+    status: read(battery, 'status'),
+    technology: read(battery, 'technology'),
+    cycleCount: num(battery, 'cycle_count'),
+    minutesRemaining,
+  };
+}
+
+/** Previous diskstats reading, for turning cumulative counters into rates. */
+let lastDiskStats: { at: number; rows: Map<string, number[]> } | null = null;
+
+/**
+ * Per-device block I/O from /proc/diskstats.
+ *
+ * Fields are cumulative since boot, so the first call establishes a baseline
+ * and returns nothing rather than reporting a meaningless since-boot average.
+ * Partitions and zero-traffic loop/ram devices are skipped -- what matters is
+ * which physical device (or dm mapping) is actually busy.
+ */
+function parseDiskIo(): DiskIo[] | undefined {
+  const raw = safeReadFile(path.join(PROC_DIR, 'diskstats'));
+  if (!raw) return undefined;
+
+  const now = Date.now();
+  const rows = new Map<string, number[]>();
+  for (const line of raw.split('\n')) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 14) continue;
+    const dev = f[2];
+    // Whole devices and dm mappings only; skip partitions and virtual noise.
+    if (!/^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|dm-\d+|mmcblk\d+)$/.test(dev)) continue;
+    rows.set(dev, [Number(f[3]), Number(f[5]), Number(f[7]), Number(f[9]), Number(f[12])]);
+  }
+  if (rows.size === 0) return undefined;
+
+  const prev = lastDiskStats;
+  lastDiskStats = { at: now, rows };
+  if (!prev) return undefined;
+
+  const elapsedMs = now - prev.at;
+  if (elapsedMs <= 0) return undefined;
+  const secs = elapsedMs / 1000;
+
+  const out: DiskIo[] = [];
+  for (const [dev, cur] of rows) {
+    const old = prev.rows.get(dev);
+    if (!old) continue;
+    const d = cur.map((v, i) => v - old[i]);
+    // Counter wrap or device reset.
+    if (d.some((v) => v < 0)) continue;
+    // Sectors are always 512 bytes in diskstats, regardless of physical size.
+    const readBytesPerSec = Math.round((d[1] * 512) / secs);
+    const writeBytesPerSec = Math.round((d[3] * 512) / secs);
+    const utilPercent = Math.max(0, Math.min(100, Math.round((d[4] / elapsedMs) * 1000) / 10));
+    if (readBytesPerSec === 0 && writeBytesPerSec === 0 && utilPercent === 0) continue;
+    out.push({
+      device: dev,
+      readBytesPerSec,
+      writeBytesPerSec,
+      readIopsPerSec: Math.round(d[0] / secs),
+      writeIopsPerSec: Math.round(d[2] / secs),
+      utilPercent,
+    });
+  }
+  return out.sort((a, b) => b.utilPercent - a.utilPercent);
 }
 
 /** Previous throttle counters, so we can tell "has ever throttled" from "is throttling now". */
@@ -568,6 +690,8 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
     thermals,
     fans,
     throttle: parseThrottle(),
+    battery: parseBattery(),
+    diskIo: parseDiskIo(),
     network,
     timestamp: Date.now(),
   };

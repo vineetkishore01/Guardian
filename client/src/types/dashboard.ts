@@ -60,6 +60,9 @@ export interface GpuTelemetry {
   temperatureC?: number;
   powerWatts?: number;
   fanSpeedPercent?: number;
+  clockMhz?: number;
+  clockMaxMhz?: number;
+  sharedMemory?: boolean;
 }
 
 export interface WanTelemetry {
@@ -113,6 +116,35 @@ export interface NetworkInterface {
   txTotalBytes: number;
 }
 
+export interface CpuThrottle {
+  coreEvents: number;
+  packageEvents: number;
+  coreTotalTimeMs: number;
+  packageTotalTimeMs: number;
+  currentMhz?: number;
+  maxMhz?: number;
+  throttlingNow: boolean;
+}
+
+export interface BatteryTelemetry {
+  present: boolean;
+  onMains: boolean;
+  chargePercent?: number;
+  status?: string;
+  technology?: string;
+  cycleCount?: number;
+  minutesRemaining?: number;
+}
+
+export interface DiskIo {
+  device: string;
+  readBytesPerSec: number;
+  writeBytesPerSec: number;
+  readIopsPerSec: number;
+  writeIopsPerSec: number;
+  utilPercent: number;
+}
+
 export interface HostTelemetry {
   hostname: string;
   os: string;
@@ -128,6 +160,9 @@ export interface HostTelemetry {
   gpu?: GpuTelemetry[];
   wan?: WanTelemetry;
   network: NetworkInterface[];
+  throttle?: CpuThrottle;
+  battery?: BatteryTelemetry;
+  diskIo?: DiskIo[];
   timestamp: number;
 }
 
@@ -159,6 +194,8 @@ export interface ContainerItem {
   memoryLimitBytes?: number;
   networkRxBytesPerSec?: number;
   networkTxBytesPerSec?: number;
+  blockReadBytesPerSec?: number;
+  blockWriteBytesPerSec?: number;
   /** Age of the stats sample in ms; large values mean the stream is stalled. */
   statAgeMs?: number;
 

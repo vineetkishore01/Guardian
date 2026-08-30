@@ -60,6 +60,11 @@ export interface GpuTelemetry {
   temperatureC?: number;
   powerWatts?: number;
   fanSpeedPercent?: number;
+  /** Current and maximum render-clock, where the driver exposes them. */
+  clockMhz?: number;
+  clockMaxMhz?: number;
+  /** True when the GPU shares system RAM, so the memory fields carry no meaning. */
+  sharedMemory?: boolean;
 }
 
 export interface WanTelemetry {
@@ -134,6 +139,42 @@ export interface CpuThrottle {
   throttlingNow: boolean;
 }
 
+/**
+ * Battery and mains state, from `/sys/class/power_supply`.
+ *
+ * On a laptop pressed into service as a server this is effectively a built-in
+ * UPS: `onMains: false` means the machine is running on battery and you have a
+ * bounded amount of time to react. This kernel does not expose `energy_now` or
+ * `power_now` on this hardware, so a runtime estimate is not always possible --
+ * `minutesRemaining` is therefore optional rather than guessed at.
+ */
+export interface BatteryTelemetry {
+  present: boolean;
+  onMains: boolean;
+  chargePercent?: number;
+  status?: string;
+  technology?: string;
+  cycleCount?: number;
+  minutesRemaining?: number;
+}
+
+/**
+ * Per-device block I/O, derived from `/proc/diskstats` deltas.
+ *
+ * I/O wait tells you the host is blocked on storage but not which device is
+ * responsible. `utilPercent` comes from the kernel's io_ms counter -- the share
+ * of wall-clock during which the queue was non-empty -- which is the same
+ * number iostat calls %util.
+ */
+export interface DiskIo {
+  device: string;
+  readBytesPerSec: number;
+  writeBytesPerSec: number;
+  readIopsPerSec: number;
+  writeIopsPerSec: number;
+  utilPercent: number;
+}
+
 export interface HostTelemetry {
   hostname: string;
   os: string;
@@ -147,6 +188,8 @@ export interface HostTelemetry {
   thermals: ThermalSensor[];
   fans?: FanSensor[];
   throttle?: CpuThrottle;
+  battery?: BatteryTelemetry;
+  diskIo?: DiskIo[];
   gpu?: GpuTelemetry[];
   wan?: WanTelemetry;
   network: NetworkInterface[];
@@ -181,6 +224,8 @@ export interface ContainerItem {
   memoryLimitBytes?: number;
   networkRxBytesPerSec?: number;
   networkTxBytesPerSec?: number;
+  blockReadBytesPerSec?: number;
+  blockWriteBytesPerSec?: number;
   /** Age of the stats sample in ms; large values mean the stream is stalled. */
   statAgeMs?: number;
 

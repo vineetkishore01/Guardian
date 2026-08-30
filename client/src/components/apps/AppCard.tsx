@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown, ArrowDownToLine } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown, ArrowDownToLine , HardDrive } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import {
   resolveContainerUrl,
@@ -110,7 +110,7 @@ export function AppCard({
       onKeyDown={handleKeyDown}
       aria-label={hasValidUrl ? `Open ${name}` : `Configure ${name}`}
       className={cn(
-        'surface surface-interactive group flex select-none flex-col p-3.5',
+        'surface surface-interactive group flex h-full select-none flex-col p-3.5',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         item.pinned && !worstIssue && 'border-brand/30',
         severity === 'crit' && 'border-crit/50',
@@ -294,6 +294,21 @@ export function AppCard({
         </div>
       )}
 
+      {item.widget?.statusText && (
+        <div
+          className={cn(
+            'mt-1.5 truncate text-2xs font-medium',
+            item.widget.badgeColor === 'crit' ? 'text-crit' : 'text-warn'
+          )}
+          title={item.widget.statusText}
+        >
+          {item.widget.statusText}
+        </div>
+      )}
+
+      {/* Pushes the footer down so cards of differing content still align. */}
+      <div className="flex-1" />
+
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-2.5 text-2xs text-muted-foreground">
         {worstIssue ? (
           <span
@@ -317,7 +332,7 @@ export function AppCard({
           <span className="truncate">{bookmark?.description || 'Bookmark'}</span>
         )}
 
-        {container && (container.cpuPercent !== undefined || container.memoryBytes !== undefined || container.networkRxBytesPerSec !== undefined) && (
+        {container && (container.cpuPercent !== undefined || container.memoryBytes !== undefined || container.networkRxBytesPerSec !== undefined || container.blockReadBytesPerSec !== undefined) && (
           <div className="flex shrink-0 items-center gap-1.5 font-mono">
             {((container.networkRxBytesPerSec || 0) > 1024 || (container.networkTxBytesPerSec || 0) > 1024) && (
               <span
@@ -326,6 +341,18 @@ export function AppCard({
               >
                 <ArrowDown className="h-2.5 w-2.5" />
                 {formatRate(container.networkRxBytesPerSec || 0)}
+              </span>
+            )}
+            {/* Only shown while there is meaningful traffic, so idle cards stay quiet. */}
+            {((container.blockReadBytesPerSec || 0) > 1024 || (container.blockWriteBytesPerSec || 0) > 1024) && (
+              <span
+                className="flex items-center gap-0.5 text-muted-foreground"
+                title={`Disk: read ${formatRate(container.blockReadBytesPerSec || 0)}  write ${formatRate(
+                  container.blockWriteBytesPerSec || 0
+                )}`}
+              >
+                <HardDrive className="h-2.5 w-2.5" />
+                {formatRate((container.blockReadBytesPerSec || 0) + (container.blockWriteBytesPerSec || 0))}
               </span>
             )}
             {container.cpuPercent !== undefined && `${container.cpuPercent.toFixed(1)}%`}

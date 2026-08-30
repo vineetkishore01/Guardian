@@ -3,6 +3,7 @@ import { AlertCircle, RefreshCw, Info } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
+import { SystemHealthStrip } from './components/metrics/SystemHealthStrip';
 import { StorageGauges } from './components/metrics/StorageGauges';
 import { NetworkHealthCard } from './components/network/NetworkHealthCard';
 import { AppGrid } from './components/apps/AppGrid';
@@ -202,6 +203,7 @@ export function App() {
             }
           />
           <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
+          <SystemHealthStrip host={data?.host} />
         </section>
 
         <section aria-labelledby="storage-heading">

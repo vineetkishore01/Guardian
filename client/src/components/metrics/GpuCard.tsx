@@ -81,23 +81,51 @@ export function GpuCard({ gpu, onClick }: GpuCardProps) {
           </div>
         </div>
 
-        {/* VRAM Memory */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-2xs">
-            <span className="text-muted-foreground">VRAM</span>
-            <span className="font-mono font-semibold text-foreground">
-              {gpu.memoryTotalBytes > 0
-                ? `${formatBytes(gpu.memoryUsedBytes, 0)} / ${formatBytes(gpu.memoryTotalBytes, 0)}`
-                : `${gpu.memoryPercent}%`}
-            </span>
+        {/*
+         * Integrated GPUs carve out of system RAM, so there is no VRAM pool to
+         * report -- the old fallback rendered a permanent "0%" that looked like
+         * a broken sensor. Show render-clock instead, which the driver does
+         * expose, and keep the VRAM bar for discrete cards.
+         */}
+        {gpu.sharedMemory ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-2xs">
+              <span className="text-muted-foreground">Clock</span>
+              <span className="font-mono font-semibold text-foreground">
+                {gpu.clockMhz !== undefined
+                  ? `${gpu.clockMhz}${gpu.clockMaxMhz ? ` / ${gpu.clockMaxMhz}` : ''} MHz`
+                  : 'shared'}
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-brand transition-all duration-500"
+                style={{
+                  width: `${
+                    gpu.clockMhz && gpu.clockMaxMhz
+                      ? Math.min(100, Math.max(0, (gpu.clockMhz / gpu.clockMaxMhz) * 100))
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-brand transition-all duration-500"
-              style={{ width: `${Math.min(100, Math.max(0, gpu.memoryPercent))}%` }}
-            />
+        ) : (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-2xs">
+              <span className="text-muted-foreground">VRAM</span>
+              <span className="font-mono font-semibold text-foreground">
+                {`${formatBytes(gpu.memoryUsedBytes, 0)} / ${formatBytes(gpu.memoryTotalBytes, 0)}`}
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-brand transition-all duration-500"
+                style={{ width: `${Math.min(100, Math.max(0, gpu.memoryPercent))}%` }}
+              />
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {gpu.fanSpeedPercent !== undefined && (

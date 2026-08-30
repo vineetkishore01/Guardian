@@ -11,6 +11,58 @@ let lastGpuCheckTime = 0;
 let cachedGpus: GpuTelemetry[] = [];
 let nvidiaSmiAvailable: boolean | null = null;
 
+/** Previous RC6 idle-residency reading per card, for computing busy% between samples. */
+const lastRc6 = new Map<string, { residencyMs: number; atMs: number }>();
+
+/*
+ * Intel i915 utilisation.
+ *
+ * i915 does not expose `gpu_busy_percent` -- that file is amdgpu-only, which is
+ * why this collector previously reported a flat 0% on every Intel machine. What
+ * i915 does expose is `rc6_residency_ms`: a monotonic counter of time spent in
+ * the RC6 idle power state. Busy time is therefore wall-clock minus the RC6
+ * delta, which needs two samples, so the first call after start returns
+ * undefined rather than a fake zero.
+ */
+function readIntelUtilisation(cardDir: string, id: string): number | undefined {
+  const candidates = [
+    path.join(cardDir, 'power/rc6_residency_ms'),
+    path.join(cardDir, 'gt/gt0/rc6_residency_ms'),
+  ];
+  let residencyMs: number | null = null;
+  for (const f of candidates) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const v = parseInt(fs.readFileSync(f, 'utf8').trim(), 10);
+      if (Number.isFinite(v)) { residencyMs = v; break; }
+    } catch { /* try next */ }
+  }
+  if (residencyMs === null) return undefined;
+
+  const now = Date.now();
+  const prev = lastRc6.get(id);
+  lastRc6.set(id, { residencyMs, atMs: now });
+  if (!prev) return undefined;
+
+  const wall = now - prev.atMs;
+  const idle = residencyMs - prev.residencyMs;
+  // Counter reset (suspend/resume) or a nonsensically short window.
+  if (wall <= 0 || idle < 0) return undefined;
+
+  return Math.max(0, Math.min(100, Math.round((1 - idle / wall) * 1000) / 10));
+}
+
+function readMhz(cardDir: string, file: string): number | undefined {
+  try {
+    const f = path.join(cardDir, file);
+    if (!fs.existsSync(f)) return undefined;
+    const v = parseInt(fs.readFileSync(f, 'utf8').trim(), 10);
+    return Number.isFinite(v) ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Queries NVIDIA GPUs using nvidia-smi CLI.
  */
@@ -84,12 +136,15 @@ function querySysfsGpus(): GpuTelemetry[] {
       const cardPath = path.join(drmDir, entry, 'device');
       if (!fs.existsSync(cardPath)) continue;
 
-      // Check busy percent (AMD / Intel i915)
+      // amdgpu exposes a ready-made busy percentage; i915 does not.
+      const cardDir = path.join(drmDir, entry);
       let utilizationPercent = 0;
+      let utilisationKnown = false;
       const busyFile = path.join(cardPath, 'gpu_busy_percent');
       if (fs.existsSync(busyFile)) {
         const raw = fs.readFileSync(busyFile, 'utf8').trim();
         utilizationPercent = Math.max(0, Math.min(100, parseInt(raw, 10) || 0));
+        utilisationKnown = true;
       }
 
       // Check vendor name
@@ -103,6 +158,18 @@ function querySysfsGpus(): GpuTelemetry[] {
           name = 'AMD Radeon GPU';
         }
       }
+
+      // Intel: derive utilisation from RC6 idle residency.
+      const isIntel = name === 'Intel HD/UHD Graphics';
+      if (isIntel && !utilisationKnown) {
+        const intelUtil = readIntelUtilisation(cardDir, entry);
+        if (intelUtil !== undefined) {
+          utilizationPercent = intelUtil;
+          utilisationKnown = true;
+        }
+      }
+      const clockMhz = readMhz(cardDir, 'gt_act_freq_mhz') ?? readMhz(cardDir, 'gt_cur_freq_mhz');
+      const clockMaxMhz = readMhz(cardDir, 'gt_max_freq_mhz') ?? readMhz(cardDir, 'gt_RP0_freq_mhz');
 
       // Check hwmon temperature if exposed
       let temperatureC: number | undefined;
@@ -123,15 +190,20 @@ function querySysfsGpus(): GpuTelemetry[] {
       }
 
       // Only add if we could verify it's a real active card
-      if (name !== 'Integrated GPU' || utilizationPercent > 0 || temperatureC) {
+      if (name !== 'Integrated GPU' || utilisationKnown || temperatureC) {
         gpus.push({
           id: entry,
           name,
           utilizationPercent,
+          // Integrated parts carve out of system RAM; there is no separate pool
+          // to report, so these stay zero and are flagged rather than shown.
           memoryUsedBytes: 0,
           memoryTotalBytes: 0,
           memoryPercent: 0,
           temperatureC,
+          clockMhz,
+          clockMaxMhz,
+          sharedMemory: isIntel,
         });
       }
     }
