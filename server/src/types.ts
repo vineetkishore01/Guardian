@@ -113,6 +113,27 @@ export interface NetworkInterface {
   txTotalBytes: number;
 }
 
+/**
+ * Intel thermal-throttle counters from
+ * `/sys/devices/system/cpu/cpu*\/thermal_throttle`.
+ *
+ * Temperature alone does not tell you whether the CPU actually gave up clock
+ * speed -- a box can sit at 95C and still run flat out, or throttle hard in
+ * short bursts that a 15-second temperature sample never catches. These are
+ * monotonic counters, so a rising `coreEvents` between samples is proof the
+ * silicon stepped down.
+ */
+export interface CpuThrottle {
+  coreEvents: number;
+  packageEvents: number;
+  coreTotalTimeMs: number;
+  packageTotalTimeMs: number;
+  currentMhz?: number;
+  maxMhz?: number;
+  /** True when the counters moved since the previous sample. */
+  throttlingNow: boolean;
+}
+
 export interface HostTelemetry {
   hostname: string;
   os: string;
@@ -125,6 +146,7 @@ export interface HostTelemetry {
   disks: DiskMount[];
   thermals: ThermalSensor[];
   fans?: FanSensor[];
+  throttle?: CpuThrottle;
   gpu?: GpuTelemetry[];
   wan?: WanTelemetry;
   network: NetworkInterface[];

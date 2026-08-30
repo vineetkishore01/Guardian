@@ -118,28 +118,64 @@ async function fetchPlexWidget(baseUrl: string, token?: string): Promise<AppWidg
 
 /**
  * Fetches widget telemetry for Jellyfin.
+ *
+ * Reports *who* is watching and *how*, not just a count. PlayMethod is the
+ * signal that matters on a small host: a Transcode session means the CPU is
+ * re-encoding in real time, which on a low-power box is the difference between
+ * idle and pegged. Those are surfaced as a critical badge so a silent transcode
+ * storm is visible before the thermals are.
  */
 async function fetchJellyfinWidget(baseUrl: string, apiKey?: string): Promise<AppWidgetData> {
-  const headers: Record<string, string> = apiKey ? { 'X-Emby-Token': apiKey } : {};
+  if (!apiKey) {
+    throw new Error('No API key configured (Jellyfin /Sessions requires one)');
+  }
+  const headers: Record<string, string> = { 'X-Emby-Token': apiKey };
   const sessions = await httpFetchJson<
-    Array<{ NowPlayingItem?: { Name?: string }; UserName?: string; PlayState?: { IsPaused?: boolean } }>
+    Array<{
+      UserName?: string;
+      DeviceName?: string;
+      Client?: string;
+      NowPlayingItem?: { Name?: string; SeriesName?: string; Type?: string };
+      PlayState?: { IsPaused?: boolean; PlayMethod?: string };
+    }>
   >(`${baseUrl}/Sessions`, headers);
 
   const playing = (Array.isArray(sessions) ? sessions : []).filter((s) => s.NowPlayingItem);
   const count = playing.length;
 
-  let subtitle: string | undefined;
-  if (playing.length > 0 && playing[0].NowPlayingItem?.Name) {
-    subtitle = playing[0].NowPlayingItem.Name;
+  const isTranscode = (s: (typeof playing)[number]) => s.PlayState?.PlayMethod === 'Transcode';
+  const transcoding = playing.filter(isTranscode).length;
+  const direct = count - transcoding;
+
+  // "alice - The Bear S03E01" / "bob - Dune (paused)"
+  const describe = (s: (typeof playing)[number]) => {
+    const item = s.NowPlayingItem || {};
+    const title = item.SeriesName ? `${item.SeriesName} - ${item.Name}` : item.Name || 'Unknown';
+    const who = s.UserName || 'unknown';
+    const flags: string[] = [];
+    if (s.PlayState?.IsPaused) flags.push('paused');
+    if (isTranscode(s)) flags.push('transcoding');
+    return `${who} - ${title}${flags.length ? ` (${flags.join(', ')})` : ''}`;
+  };
+
+  const metrics: Array<{ label: string; value: string | number }> = [
+    { label: 'Watching', value: count },
+    { label: 'Direct', value: direct },
+    { label: 'Transcoding', value: transcoding },
+  ];
+  // One row per viewer, so the dashboard answers "who" without opening Jellyfin.
+  for (const s of playing.slice(0, 4)) {
+    metrics.push({ label: s.UserName || 'unknown', value: describe(s).replace(/^[^-]+ - /, '') });
   }
 
   return {
     type: 'media',
     title: 'Jellyfin',
-    badge: count === 1 ? '1 Watching' : `${count} Watching`,
-    badgeColor: count > 0 ? 'ok' : 'muted',
-    subtitle: subtitle || (count > 0 ? 'Active playback' : 'Idle'),
-    metrics: [{ label: 'Active', value: count }],
+    badge: transcoding > 0 ? `${transcoding} Transcoding` : count === 1 ? '1 Watching' : `${count} Watching`,
+    badgeColor: transcoding > 0 ? 'crit' : count > 0 ? 'ok' : 'muted',
+    subtitle: count > 0 ? playing.map(describe).join(' · ') : 'Idle',
+    statusText: transcoding > 0 ? 'Transcoding - CPU is re-encoding in real time' : undefined,
+    metrics,
     updatedAt: Date.now(),
   };
 }
@@ -248,6 +284,84 @@ async function fetchAdGuardWidget(baseUrl: string, username?: string, password?:
 }
 
 /**
+ * Fetches widget telemetry for Radarr / Sonarr.
+ *
+ * Two questions the dashboard should answer without opening the app: what is
+ * downloading right now, and is the instance complaining about anything.
+ * `/queue` covers the first, `/health` the second -- and a stalled or errored
+ * grab is escalated to a warning badge, because a queue that is "full" but
+ * making no progress looks identical to a healthy one at a glance.
+ */
+async function fetchArrWidget(baseUrl: string, apiKey: string | undefined, label: string): Promise<AppWidgetData> {
+  if (!apiKey) {
+    throw new Error(`No API key configured (${label} requires one)`);
+  }
+  const headers = { 'X-Api-Key': apiKey };
+
+  const queue = await httpFetchJson<{
+    totalRecords?: number;
+    records?: Array<{
+      title?: string;
+      status?: string;
+      trackedDownloadStatus?: string;
+      size?: number;
+      sizeleft?: number;
+      errorMessage?: string;
+    }>;
+  }>(`${baseUrl}/api/v3/queue?pageSize=50`, headers);
+
+  // Health is advisory: if it fails we still want the queue widget.
+  let warnings = 0;
+  try {
+    const health = await httpFetchJson<Array<{ type?: string }>>(`${baseUrl}/api/v3/health`, headers);
+    warnings = (Array.isArray(health) ? health : []).filter((h) => h.type !== 'ok').length;
+  } catch {
+    warnings = -1;
+  }
+
+  const records = queue.records || [];
+  const total = queue.totalRecords ?? records.length;
+  const downloading = records.filter((r) => (r.status || '').toLowerCase() === 'downloading').length;
+  const problems = records.filter(
+    (r) => r.trackedDownloadStatus === 'warning' || r.trackedDownloadStatus === 'error' || r.errorMessage
+  ).length;
+
+  // Aggregate progress, so "3 downloading" comes with a percentage.
+  const totalSize = records.reduce((a, r) => a + (r.size || 0), 0);
+  const totalLeft = records.reduce((a, r) => a + (r.sizeleft || 0), 0);
+  const pct = totalSize > 0 ? Math.round(((totalSize - totalLeft) / totalSize) * 100) : 0;
+
+  const metrics: Array<{ label: string; value: string | number }> = [
+    { label: 'Queue', value: total },
+    { label: 'Downloading', value: downloading },
+  ];
+  if (totalSize > 0) metrics.push({ label: 'Progress', value: `${pct}%` });
+  if (warnings >= 0) metrics.push({ label: 'Health', value: warnings === 0 ? 'OK' : `${warnings} warning(s)` });
+  for (const r of records.slice(0, 3)) {
+    if (r.title) metrics.push({ label: r.status || 'queued', value: r.title.slice(0, 60) });
+  }
+
+  const badgeColor: AppWidgetData['badgeColor'] =
+    problems > 0 ? 'crit' : warnings > 0 ? 'warn' : downloading > 0 ? 'brand' : 'muted';
+
+  return {
+    type: 'arr',
+    title: label,
+    badge: downloading > 0 ? `${downloading} Downloading` : total > 0 ? `${total} Queued` : 'Idle',
+    badgeColor,
+    subtitle:
+      records.length > 0
+        ? `${records[0].title?.slice(0, 70) || 'unknown'}${totalSize > 0 ? ` - ${pct}%` : ''}`
+        : warnings > 0
+          ? `${warnings} health warning(s)`
+          : 'Queue empty',
+    statusText: problems > 0 ? `${problems} stalled or errored item(s)` : undefined,
+    metrics,
+    updatedAt: Date.now(),
+  };
+}
+
+/**
  * Fetches widget telemetry for a given app / container.
  */
 export async function getAppWidgetData(
@@ -285,6 +399,12 @@ export async function getAppWidgetData(
       case 'adguard':
         result = await fetchAdGuardWidget(baseUrl, config.username, config.password);
         break;
+      case 'radarr':
+        result = await fetchArrWidget(baseUrl, config.apiKey, 'Radarr');
+        break;
+      case 'sonarr':
+        result = await fetchArrWidget(baseUrl, config.apiKey, 'Sonarr');
+        break;
       default:
         return null;
     }
@@ -293,8 +413,24 @@ export async function getAppWidgetData(
       widgetCache.set(key, { data: result, time: now });
       return result;
     }
-  } catch {
-    // If query fails or app is unreachable, silently omit widget
+  } catch (err) {
+    /*
+     * Previously this returned null, which made a missing API key, an
+     * unreachable host and a genuinely idle app render identically -- no
+     * widget, no explanation. A broken integration should look broken.
+     */
+    const message = (err as Error)?.message || 'Unknown error';
+    const failed: AppWidgetData = {
+      type: 'custom',
+      title: item.name,
+      badge: 'Unavailable',
+      badgeColor: 'warn',
+      subtitle: message.slice(0, 120),
+      statusText: `${type} integration failed`,
+      updatedAt: Date.now(),
+    };
+    widgetCache.set(key, { data: failed, time: now });
+    return failed;
   }
 
   return null;

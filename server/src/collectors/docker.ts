@@ -1037,8 +1037,26 @@ run().catch(e => console.error('Self-update runner error', e));
   try {
     await startContainer(newContainerId);
   } catch (startErr) {
-    logger.error('docker', `Failed to start new container ${rawName}`, startErr);
-    throw new Error(`New container created but failed to start: ${(startErr as Error).message}`);
+    /*
+     * Roll back rather than throwing straight out. Bailing here used to skip
+     * step 7, which left the previous container stranded under its temporary
+     * `<name>_old_<timestamp>` name *and* a dead replacement holding the real
+     * name -- the host ended up running a duplicate that no longer matched the
+     * compose file. Put the old container back and restart it instead.
+     */
+    logger.error('docker', `Failed to start new container ${rawName}, rolling back`, startErr);
+    try {
+      await dockerApiRequest(`/containers/${encodeURIComponent(newContainerId)}?v=false&force=true`, 'DELETE');
+      await dockerApiRequest(
+        `/containers/${encodeURIComponent(tempName)}/rename?name=${encodeURIComponent(rawName)}`,
+        'POST'
+      );
+      await startContainer(rawName);
+      logger.info('docker', `Rolled ${rawName} back to the previous container`);
+    } catch (rollbackErr) {
+      logger.error('docker', `Rollback failed for ${rawName}; ${tempName} may still exist`, rollbackErr);
+    }
+    throw new Error(`New container failed to start, rolled back: ${(startErr as Error).message}`);
   }
 
   // 7. Clean up the old container

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface } from '../types.js';
+import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle } from '../types.js';
 
 const PROC_DIR = process.env.HOST_PROC || '/proc';
 const SYS_DIR = process.env.HOST_SYS || '/sys';
@@ -234,6 +234,68 @@ function parseUptime(): { seconds: number; formatted: string } {
   parts.push(`${minutes}m`);
 
   return { seconds: sec, formatted: parts.join(' ') || '0m' };
+}
+
+/** Previous throttle counters, so we can tell "has ever throttled" from "is throttling now". */
+let lastThrottle: { core: number; pkg: number } | null = null;
+
+/**
+ * Intel thermal-throttle counters, summed across cores.
+ *
+ * Temperature is a lagging and easily-missed signal: a 15-second sample can
+ * sit at a comfortable number while the CPU is dropping clocks in bursts
+ * between reads. These counters are monotonic, so any increase between two
+ * samples is hard evidence the silicon stepped down -- which on a fanless or
+ * lid-closed box is the thing you actually want alerting on.
+ */
+function parseThrottle(): CpuThrottle | undefined {
+  const cpuDir = path.join(SYS_DIR, 'devices/system/cpu');
+  let coreEvents = 0;
+  let packageEvents = 0;
+  let coreTotalTimeMs = 0;
+  let packageTotalTimeMs = 0;
+  let found = false;
+
+  try {
+    for (const entry of fs.readdirSync(cpuDir)) {
+      if (!/^cpu\d+$/.test(entry)) continue;
+      const tt = path.join(cpuDir, entry, 'thermal_throttle');
+      const num = (f: string) => {
+        const raw = safeReadFile(path.join(tt, f))?.trim();
+        const n = raw ? parseInt(raw, 10) : NaN;
+        return Number.isFinite(n) ? n : 0;
+      };
+      if (!fs.existsSync(tt)) continue;
+      found = true;
+      coreEvents += num('core_throttle_count');
+      packageEvents += num('package_throttle_count');
+      coreTotalTimeMs += num('core_throttle_total_time_ms');
+      packageTotalTimeMs += num('package_throttle_total_time_ms');
+    }
+  } catch {
+    return undefined;
+  }
+  if (!found) return undefined;
+
+  const freq = (f: string) => {
+    const raw = safeReadFile(path.join(cpuDir, 'cpu0/cpufreq', f))?.trim();
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) ? Math.round(n / 1000) : undefined;
+  };
+
+  const throttlingNow =
+    lastThrottle !== null && (coreEvents > lastThrottle.core || packageEvents > lastThrottle.pkg);
+  lastThrottle = { core: coreEvents, pkg: packageEvents };
+
+  return {
+    coreEvents,
+    packageEvents,
+    coreTotalTimeMs,
+    packageTotalTimeMs,
+    currentMhz: freq('scaling_cur_freq'),
+    maxMhz: freq('cpuinfo_max_freq'),
+    throttlingNow,
+  };
 }
 
 /**
@@ -505,6 +567,7 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
     memory,
     thermals,
     fans,
+    throttle: parseThrottle(),
     network,
     timestamp: Date.now(),
   };
