@@ -26,6 +26,8 @@ import {
 import { collectTopProcesses } from './collectors/processes.js';
 import { telemetryHistory, METRIC_KEYS } from './history.js';
 import { diskTrends } from './disktrend.js';
+import { deriveProblems } from './problems.js';
+import { processProblems } from './alerts.js';
 import { logger, installCrashHandlers } from './logger.js';
 import { getPowerCapability, executePowerAction, PowerError } from './power.js';
 import { runServiceProbes, buildProbeTargets } from './prober.js';
@@ -194,6 +196,7 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     containers,
     dockerDf,
     probes,
+    problems: [],
     diskTrends: trends.length > 0 ? trends : undefined,
     config,
     history: globalHistory.getHistory(),
@@ -202,6 +205,16 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
       docker: isDockerLive() ? 'live' : 'synthetic',
     },
   };
+
+  /*
+   * Derived last, because it reads the assembled snapshot. The same list drives
+   * the on-screen "needs attention" strip and the outbound webhook, so the two
+   * can never disagree about what counts as a problem.
+   */
+  state.problems = deriveProblems(state);
+
+  // Fire-and-forget: alert delivery must never delay or fail a sample.
+  void processProblems(state.problems, config.settings, host.hostname);
 
   latestState = state;
   return state;

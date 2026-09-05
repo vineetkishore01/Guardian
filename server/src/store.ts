@@ -322,6 +322,20 @@ export function sanitizeSettings(body: unknown): Partial<DashboardSettings> | nu
     refreshIntervalSec: Number.isFinite(interval)
       ? Math.min(300, Math.max(2, Math.round(interval)))
       : undefined,
+    /*
+     * Alerting. The URL is stored verbatim and validated as http(s) at send
+     * time rather than here -- a webhook target is often a long opaque token,
+     * and normalising it to satisfy a stricter parser would silently break
+     * delivery in a way that only shows up when an alert fails to arrive.
+     */
+    alertWebhookUrl: cleanString(b.alertWebhookUrl, 500),
+    alertMinSeverity:
+      b.alertMinSeverity === 'crit' || b.alertMinSeverity === 'warn'
+        ? (b.alertMinSeverity as 'crit' | 'warn')
+        : undefined,
+    alertCooldownMinutes: Number.isFinite(Number(b.alertCooldownMinutes))
+      ? Math.min(1440, Math.max(1, Math.round(Number(b.alertCooldownMinutes))))
+      : undefined,
   });
 }
 

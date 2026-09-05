@@ -84,6 +84,18 @@ export interface DiskTrend {
   spanHours: number;
 }
 
+export type Severity = 'ok' | 'warn' | 'crit';
+
+/** A single thing currently wrong, from any source. See problems.ts. */
+export interface Problem {
+  /** Stable across samples and keyed on the subject, never the reading. */
+  id: string;
+  severity: Severity;
+  scope: 'host' | 'disk' | 'container' | 'probe';
+  label: string;
+  detail: string;
+}
+
 export interface ThermalSensor {
   name: string;
   label: string;
@@ -383,6 +395,12 @@ export interface DashboardSettings {
   customHostUrl?: string;
   refreshIntervalSec: number;
   title: string;
+  /** Where to POST alerts. Empty disables alerting entirely. */
+  alertWebhookUrl?: string;
+  /** Only notify at or above this severity. Defaults to warn. */
+  alertMinSeverity?: 'warn' | 'crit';
+  /** How long before an unresolved problem is mentioned again. */
+  alertCooldownMinutes?: number;
 }
 
 export interface UserConfigStore {
@@ -416,6 +434,8 @@ export interface FullDashboardState {
   containers: ContainerItem[];
   dockerDf: DockerSystemDf | null;
   probes: ServiceProbeResult[];
+  /** Everything currently wrong, worst first. */
+  problems?: Problem[];
   /** Fill projections, keyed by mount point. Absent until enough history exists. */
   diskTrends?: DiskTrend[];
   config: UserConfigStore;

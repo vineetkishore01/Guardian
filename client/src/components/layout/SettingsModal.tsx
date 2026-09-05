@@ -36,6 +36,9 @@ export function SettingsModal({
   const [customHostUrl, setCustomHostUrl] = useState('');
   const [title, setTitle] = useState('');
   const [refreshInterval, setRefreshInterval] = useState(15);
+  const [alertWebhookUrl, setAlertWebhookUrl] = useState('');
+  const [alertMinSeverity, setAlertMinSeverity] = useState<'warn' | 'crit'>('warn');
+  const [alertCooldownMinutes, setAlertCooldownMinutes] = useState(60);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +52,9 @@ export function SettingsModal({
     setCustomHostUrl(settings?.customHostUrl || '');
     setTitle(settings?.title || 'Guardian Dashboard');
     setRefreshInterval(settings?.refreshIntervalSec || 15);
+    setAlertWebhookUrl(settings?.alertWebhookUrl || '');
+    setAlertMinSeverity(settings?.alertMinSeverity || 'warn');
+    setAlertCooldownMinutes(settings?.alertCooldownMinutes || 60);
     setError(null);
   }, [settings, open]);
 
@@ -64,6 +70,11 @@ export function SettingsModal({
         customHostUrl: customHostUrl.trim() || undefined,
         title: title.trim() || 'Guardian Dashboard',
         refreshIntervalSec: Number(refreshInterval),
+        // Sent as empty string, not undefined, so clearing the field actually
+        // disables alerting rather than silently keeping the previous target.
+        alertWebhookUrl: alertWebhookUrl.trim(),
+        alertMinSeverity,
+        alertCooldownMinutes: Number(alertCooldownMinutes),
       });
       if (ok) {
         onOpenChange(false);
@@ -216,6 +227,60 @@ export function SettingsModal({
             <option value={60}>60 seconds</option>
           </Select>
         </Field>
+
+        <Field
+          label="Alert webhook"
+          htmlFor="alert-webhook"
+          hint="POSTs JSON when a problem appears or clears. Works with ntfy, Discord, Slack or anything that accepts a JSON body. Leave empty to disable."
+        >
+          <Input
+            id="alert-webhook"
+            type="url"
+            placeholder="https://ntfy.sh/my-topic"
+            value={alertWebhookUrl}
+            onChange={(e) => setAlertWebhookUrl(e.target.value)}
+          />
+        </Field>
+
+        {/* Only meaningful once a target exists; showing them unconditionally
+            invites tuning a notifier that cannot notify. */}
+        {alertWebhookUrl.trim() !== '' && (
+          <>
+            <Field
+              label="Alert on"
+              htmlFor="alert-min-severity"
+              hint="Critical-only is quieter but will not tell you a disk is filling until it is nearly full."
+            >
+              <Select
+                id="alert-min-severity"
+                value={alertMinSeverity}
+                onChange={(e) => setAlertMinSeverity(e.target.value as 'warn' | 'crit')}
+                className="h-9 w-full"
+              >
+                <option value="warn">Warnings and critical (recommended)</option>
+                <option value="crit">Critical only</option>
+              </Select>
+            </Field>
+
+            <Field
+              label="Repeat reminder after"
+              htmlFor="alert-cooldown"
+              hint="How long an unresolved problem stays quiet before it is mentioned again. Escalations always notify immediately."
+            >
+              <Select
+                id="alert-cooldown"
+                value={alertCooldownMinutes}
+                onChange={(e) => setAlertCooldownMinutes(Number(e.target.value))}
+                className="h-9 w-full"
+              >
+                <option value={15}>15 minutes</option>
+                <option value={60}>1 hour (recommended)</option>
+                <option value={240}>4 hours</option>
+                <option value={1440}>24 hours</option>
+              </Select>
+            </Field>
+          </>
+        )}
 
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
           <div className="min-w-0">

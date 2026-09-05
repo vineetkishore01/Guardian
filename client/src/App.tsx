@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AlertCircle, RefreshCw, Info } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
+import { ProblemsStrip } from './components/layout/ProblemsStrip';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
 import { SystemHealthStrip } from './components/metrics/SystemHealthStrip';
 import { StorageGauges } from './components/metrics/StorageGauges';
@@ -179,6 +180,10 @@ export function App() {
             </p>
           </div>
         )}
+
+        {/* Above everything else: the answer to "is anything wrong?" should not
+            require scrolling to the section that happens to be coloured. */}
+        <ProblemsStrip problems={data?.problems} />
 
         <PruneAdvisorBanner dockerDf={data?.dockerDf} onPrune={pruneDocker} />
 
