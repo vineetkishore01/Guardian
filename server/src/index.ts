@@ -582,6 +582,22 @@ app.get('/api/speedtest/history', (_req: Request, res: Response) => {
   });
 });
 
+/*
+ * Live progress of a running test.
+ *
+ * The speedtest already tracked real per-phase progress -- measured Mbps from
+ * actual bytes and elapsed time -- and stored it, but nothing ever served it.
+ * The bar consequently sat frozen at a hardcoded 10% for the entire test and
+ * then vanished, which read as a hang rather than a measurement.
+ *
+ * Deliberately its own route rather than reusing /history: this is polled every
+ * few hundred milliseconds while a test runs, and the history payload grows
+ * with every result recorded. Returns null when nothing is running.
+ */
+app.get('/api/speedtest/progress', (_req: Request, res: Response) => {
+  res.json({ progress: getCurrentSpeedtestProgress() });
+});
+
 app.post('/api/network/wan/refresh', async (_req: Request, res: Response) => {
   try {
     const wan = await collectWanTelemetry(true);

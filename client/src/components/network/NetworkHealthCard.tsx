@@ -51,17 +51,61 @@ export function NetworkHealthCard({
     }
   };
 
+  /*
+   * Progress is polled, not inferred.
+   *
+   * This used to set one static value -- 10%, phase "ping" -- and then await
+   * the whole test, so the bar sat frozen at a tenth of its width for the full
+   * run and vanished on completion. It read as a hang. The server was already
+   * measuring real per-phase progress from actual bytes and elapsed time; it
+   * simply had no route to serve it and nothing asking.
+   */
+  const pollRef = React.useRef<number | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current !== null) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  // A test outliving its card would otherwise keep polling forever.
+  React.useEffect(() => stopPolling, []);
+
   const handleStartSpeedtest = async () => {
     if (testing) return;
     setTesting(true);
     setTestError(null);
-    setCurrentProgress({ phase: 'ping', currentMbps: 0, progressPercent: 10 });
+    setCurrentProgress({ phase: 'ping', currentMbps: 0, progressPercent: 5 });
+
+    stopPolling();
+    pollRef.current = window.setInterval(async () => {
+      try {
+        const res = await fetch('/api/speedtest/progress');
+        if (!res.ok) return;
+        const { progress } = (await res.json()) as { progress: SpeedtestProgress | null };
+        if (!progress) return;
+
+        /*
+         * The resolved promise is what marks the end, not the polled phase.
+         * The server keeps the last test's final state until the next one
+         * starts, so a poll landing early can return a stale "complete" and
+         * snap the bar to 100% before this run has measured anything.
+         */
+        if (progress.phase === 'complete' || progress.phase === 'error') return;
+        setCurrentProgress(progress);
+      } catch {
+        // Transient; the next tick retries. A failed poll must never fail the
+        // test that is still running perfectly well underneath it.
+      }
+    }, 450);
 
     try {
       await onRunSpeedtest();
     } catch (err) {
       setTestError((err as Error).message || 'Speedtest failed');
     } finally {
+      stopPolling();
       setTesting(false);
       setCurrentProgress(null);
     }
