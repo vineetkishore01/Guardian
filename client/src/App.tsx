@@ -225,7 +225,7 @@ export function App() {
               ) : null
             }
           />
-          <StorageGauges disks={disks} onOpenHistory={() => openMetric('disk')} />
+          <StorageGauges disks={disks} trends={data?.diskTrends} onOpenHistory={() => openMetric('disk')} />
         </section>
 
         <section aria-labelledby="network-heading">

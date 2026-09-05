@@ -66,6 +66,24 @@ export interface DiskMount {
   tempC?: number;
 }
 
+/**
+ * Projected fill trajectory for one filesystem.
+ *
+ * `direction` is deliberately coarse and `daysUntilFull` deliberately absent
+ * unless the fit is worth trusting: a confident-looking projection built from
+ * two noisy points is worse than none.
+ */
+export interface DiskTrend {
+  mountPoint: string;
+  /** Signed; negative means the volume is being reclaimed. */
+  bytesPerDay: number;
+  direction: 'filling' | 'draining' | 'stable';
+  /** Only present when filling, and only when the answer is under a year. */
+  daysUntilFull?: number;
+  sampleCount: number;
+  spanHours: number;
+}
+
 export interface ThermalSensor {
   name: string;
   label: string;
@@ -398,6 +416,8 @@ export interface FullDashboardState {
   containers: ContainerItem[];
   dockerDf: DockerSystemDf | null;
   probes: ServiceProbeResult[];
+  /** Fill projections, keyed by mount point. Absent until enough history exists. */
+  diskTrends?: DiskTrend[];
   config: UserConfigStore;
   history: HistoryPoint[];
   sources: DataSources;

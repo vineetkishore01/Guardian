@@ -25,6 +25,7 @@ import {
 } from './collectors/docker.js';
 import { collectTopProcesses } from './collectors/processes.js';
 import { telemetryHistory, METRIC_KEYS } from './history.js';
+import { diskTrends } from './disktrend.js';
 import { logger, installCrashHandlers } from './logger.js';
 import { getPowerCapability, executePowerAction, PowerError } from './power.js';
 import { runServiceProbes, buildProbeTargets } from './prober.js';
@@ -181,11 +182,19 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     disk: fullestDisk,
   });
 
+  // Fill trajectory per volume. Recorded every sample, but bucketed hourly
+  // inside the store, so this is cheap regardless of the refresh interval.
+  diskTrends.record(disks, host.timestamp);
+  const trends = disks
+    .map((d) => diskTrends.trendFor(d, host.timestamp))
+    .filter((t): t is NonNullable<typeof t> => t !== undefined);
+
   const state: FullDashboardState = {
     host,
     containers,
     dockerDf,
     probes,
+    diskTrends: trends.length > 0 ? trends : undefined,
     config,
     history: globalHistory.getHistory(),
     sources: {
@@ -673,6 +682,7 @@ function shutdown(signal: string) {
   // Close open history buckets and flush both stores before exiting, so a
   // restart does not lose the current interval.
   telemetryHistory.flushAndSave();
+  diskTrends.flushAndSave();
   stopContainerStatsStreams();
   logger.save();
 

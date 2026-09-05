@@ -2,12 +2,38 @@ import React from 'react';
 import { HardDrive, Thermometer } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Progress } from '../ui/Progress';
-import { DiskMount } from '../../types/dashboard';
+import { DiskMount, DiskTrend } from '../../types/dashboard';
 import { formatBytes, severityFor, severityTextClass, cn } from '../../lib/utils';
 
 interface StorageGaugesProps {
   disks?: DiskMount[];
+  trends?: DiskTrend[];
   onOpenHistory?: () => void;
+}
+
+/**
+ * Turns a fit into a sentence.
+ *
+ * "+40 GB/day" is a fact; "about 10 days until full" is the thing that makes
+ * someone act, so the estimate leads and the rate supports it.
+ */
+function describeTrend(trend: DiskTrend): { text: string; urgent: boolean } | null {
+  const perDay = formatBytes(Math.abs(trend.bytesPerDay));
+
+  if (trend.direction === 'stable') return { text: 'Stable', urgent: false };
+  if (trend.direction === 'draining') return { text: `Freeing ${perDay}/day`, urgent: false };
+
+  if (trend.daysUntilFull === undefined) {
+    return { text: `Filling ${perDay}/day`, urgent: false };
+  }
+  const days = trend.daysUntilFull;
+  const when =
+    days < 1
+      ? `full in under a day`
+      : days < 2
+        ? `full in about a day`
+        : `full in about ${Math.round(days)} days`;
+  return { text: `+${perDay}/day - ${when}`, urgent: days <= 14 };
 }
 
 const STATUS_LABEL = {
@@ -16,7 +42,7 @@ const STATUS_LABEL = {
   crit: 'Low space',
 } as const;
 
-export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps) {
+export function StorageGauges({ disks = [], trends = [], onOpenHistory }: StorageGaugesProps) {
   const visibleDisks = disks.filter(
     (d) =>
       !/^\/(boot|efi)(\/|$)/i.test(d.mountPoint) &&
@@ -39,6 +65,8 @@ export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps)
         // Derive severity from the number rather than trusting a flag computed
         // upstream, so the badge, bar and figure can never disagree.
         const severity = severityFor(disk.usedPercent, 80, 90);
+        const trend = trends.find((t) => t.mountPoint === disk.mountPoint);
+        const trendText = trend ? describeTrend(trend) : null;
 
         return (
           <div
@@ -114,6 +142,20 @@ export function StorageGauges({ disks = [], onOpenHistory }: StorageGaugesProps)
                 <span>{formatBytes(disk.usedBytes)} used</span>
                 <span>{formatBytes(disk.totalBytes)} capacity</span>
               </div>
+
+              {/* A percentage tells you where the volume is; only the trend
+                  tells you where it is going. */}
+              {trendText && (
+                <div
+                  className={cn(
+                    'mt-1.5 text-2xs',
+                    trendText.urgent ? 'font-medium text-warn' : 'text-muted-foreground'
+                  )}
+                  title={`Fitted over ${trend!.sampleCount} hourly samples spanning ${trend!.spanHours}h.`}
+                >
+                  {trendText.text}
+                </div>
+              )}
             </div>
           </div>
         );
