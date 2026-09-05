@@ -1,4 +1,4 @@
-import { BatteryFull, BatteryWarning, Plug, PlugZap, Gauge, HardDrive } from 'lucide-react';
+import { BatteryFull, BatteryWarning, Plug, PlugZap, Gauge, HardDrive, Activity } from 'lucide-react';
 import { HostTelemetry } from '../../types/dashboard';
 import { formatRate, cn } from '../../lib/utils';
 
@@ -22,9 +22,17 @@ interface Props {
  */
 export function SystemHealthStrip({ host }: Props) {
   if (!host) return null;
-  const { battery, throttle, diskIo } = host;
+  const { battery, throttle, diskIo, pressure } = host;
   const busyDisks = (diskIo ?? []).filter((d) => d.utilPercent > 0 || d.readBytesPerSec + d.writeBytesPerSec > 0);
-  if (!battery && !throttle && busyDisks.length === 0) return null;
+  /*
+   * Pressure only earns a tile once something is actually stalling. A box that
+   * is genuinely idle would otherwise get a permanent row of zeroes, which is
+   * exactly the kind of decoration that trains you to stop reading the strip.
+   */
+  const stalling =
+    pressure &&
+    Math.max(pressure.cpu?.some10 ?? 0, pressure.io?.some10 ?? 0, pressure.memory?.some10 ?? 0) >= 1;
+  if (!battery && !throttle && busyDisks.length === 0 && !stalling) return null;
 
   const onBattery = battery?.present && !battery.onMains;
   const throttled = throttle?.throttlingNow;
@@ -97,6 +105,47 @@ export function SystemHealthStrip({ host }: Props) {
           </div>
           <div className="mt-1 text-2xs text-muted-foreground">
             {throttle.coreEvents} core / {throttle.packageEvents} package events since boot
+          </div>
+        </div>
+      )}
+
+      {stalling && pressure && (
+        <div
+          className={cn(
+            'surface p-3.5',
+            (pressure.memory?.some10 ?? 0) >= 10 && 'border-crit/50'
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted-foreground">
+              <Activity className="h-3.5 w-3.5" />
+              Stall Pressure
+            </span>
+            <span className="font-mono text-2xs text-muted-foreground">avg10 / avg60</span>
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {([
+              ['io', pressure.io, 'Tasks blocked on disk'],
+              ['memory', pressure.memory, 'Tasks blocked reclaiming memory'],
+              ['cpu', pressure.cpu, 'Tasks waiting for a runnable CPU'],
+            ] as const).map(([label, metric, title]) =>
+              metric ? (
+                <div key={label} className="flex items-center justify-between gap-2 text-2xs" title={title}>
+                  <span className="font-mono text-foreground">{label}</span>
+                  <span
+                    className={cn(
+                      'shrink-0 font-mono font-semibold',
+                      metric.some10 >= 20 ? 'text-crit' : metric.some10 >= 5 ? 'text-warn' : 'text-muted-foreground'
+                    )}
+                  >
+                    {metric.some10.toFixed(1)}% / {metric.some60.toFixed(1)}%
+                  </span>
+                </div>
+              ) : null
+            )}
+          </div>
+          <div className="mt-1.5 text-2xs text-muted-foreground">
+            Share of time at least one task was stalled.
           </div>
         </div>
       )}

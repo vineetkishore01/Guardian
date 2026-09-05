@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle, BatteryTelemetry, DiskIo } from '../types.js';
+import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle, BatteryTelemetry, DiskIo, PressureInfo, PressureMetric } from '../types.js';
 
 const PROC_DIR = process.env.HOST_PROC || '/proc';
 const SYS_DIR = process.env.HOST_SYS || '/sys';
@@ -201,6 +201,93 @@ function parseProcMeminfo(): MemoryInfo {
     swapUsedBytes: swapUsed,
     swapPercent,
   };
+}
+
+/*
+ * /proc/vmstat swap counters, converted to a rate.
+ *
+ * These are monotonic page counters since boot, so like every other counter in
+ * this file they are only meaningful as a delta against the previous read.
+ * The first call establishes the baseline and reports nothing.
+ */
+let lastSwapCounters: { in: number; out: number; time: number } | null = null;
+
+function parseSwapRates(): { swapInBytesPerSec?: number; swapOutBytesPerSec?: number } {
+  const raw = safeReadFile(path.join(PROC_DIR, 'vmstat'));
+  if (!raw) return {};
+
+  let pswpin: number | null = null;
+  let pswpout: number | null = null;
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('pswpin ')) pswpin = parseInt(line.slice(7).trim(), 10);
+    else if (line.startsWith('pswpout ')) pswpout = parseInt(line.slice(8).trim(), 10);
+    if (pswpin !== null && pswpout !== null) break;
+  }
+  if (pswpin === null || pswpout === null || !Number.isFinite(pswpin) || !Number.isFinite(pswpout)) {
+    return {};
+  }
+
+  const now = Date.now();
+  const prev = lastSwapCounters;
+  lastSwapCounters = { in: pswpin, out: pswpout, time: now };
+
+  if (!prev) return {};
+  const elapsedSec = (now - prev.time) / 1000;
+  if (elapsedSec <= 0) return {};
+
+  // Counters reset on reboot; a negative delta means we are looking at a new
+  // kernel, not negative paging.
+  const inDelta = pswpin - prev.in;
+  const outDelta = pswpout - prev.out;
+  if (inDelta < 0 || outDelta < 0) return {};
+
+  const pageSize = 4096;
+  return {
+    swapInBytesPerSec: Math.round((inDelta * pageSize) / elapsedSec),
+    swapOutBytesPerSec: Math.round((outDelta * pageSize) / elapsedSec),
+  };
+}
+
+/**
+ * Reads one /proc/pressure/<resource> file.
+ *
+ * Format is two lines, `some avg10=0.00 avg60=0.00 avg300=0.00 total=N` and the
+ * same for `full`. The cpu file has no `full` line on most kernels, which is
+ * expected rather than an error.
+ */
+function parsePressureFile(resource: string): PressureMetric | undefined {
+  const raw = safeReadFile(path.join(PROC_DIR, 'pressure', resource));
+  if (!raw) return undefined;
+
+  const read = (prefix: string) => {
+    const line = raw.split('\n').find((l) => l.startsWith(prefix));
+    if (!line) return null;
+    const avg10 = line.match(/avg10=([\d.]+)/);
+    const avg60 = line.match(/avg60=([\d.]+)/);
+    return {
+      a10: avg10 ? parseFloat(avg10[1]) : 0,
+      a60: avg60 ? parseFloat(avg60[1]) : 0,
+    };
+  };
+
+  const some = read('some');
+  if (!some) return undefined;
+  const full = read('full');
+
+  return {
+    some10: some.a10,
+    some60: some.a60,
+    full10: full ? full.a10 : 0,
+    full60: full ? full.a60 : 0,
+  };
+}
+
+function parsePressure(): PressureInfo | undefined {
+  const cpu = parsePressureFile('cpu');
+  const io = parsePressureFile('io');
+  const memory = parsePressureFile('memory');
+  if (!cpu && !io && !memory) return undefined;
+  return { cpu, io, memory };
 }
 
 function parseLoadAvg(): [number, number, number] {
@@ -657,7 +744,7 @@ export function isHostDataLive(): boolean {
 
 export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
   const { totalUsage, cores, iowaitPercent, stealPercent } = parseProcStat();
-  const memory = parseProcMeminfo();
+  const memory = { ...parseProcMeminfo(), ...parseSwapRates() };
   const loadAvg = parseLoadAvg();
   const uptime = parseUptime();
   const thermals = parseThermals();
@@ -692,6 +779,7 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
     throttle: parseThrottle(),
     battery: parseBattery(),
     diskIo: parseDiskIo(),
+    pressure: parsePressure(),
     network,
     timestamp: Date.now(),
   };

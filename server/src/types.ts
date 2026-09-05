@@ -20,6 +20,36 @@ export interface MemoryInfo {
   swapTotalBytes: number;
   swapUsedBytes: number;
   swapPercent: number;
+  /*
+   * Swap *traffic*, from /proc/vmstat. Occupancy alone cannot distinguish a
+   * host that paged something out hours ago and moved on from one that is
+   * thrashing right now -- both sit at a constant percentage. Sustained
+   * non-zero in both directions is the signature of thrashing.
+   */
+  swapInBytesPerSec?: number;
+  swapOutBytesPerSec?: number;
+}
+
+/**
+ * Linux pressure-stall information, from /proc/pressure/{cpu,io,memory}.
+ *
+ * `some` is the share of time at least one task was stalled on the resource;
+ * `full` is the share where every task was. On a small box `io.some` climbing
+ * while CPU sits near zero is the clearest statement that the disks, not the
+ * processor, are the constraint -- iowait says the same thing far less
+ * legibly. Absent on kernels built without CONFIG_PSI.
+ */
+export interface PressureMetric {
+  some10: number;
+  some60: number;
+  full10: number;
+  full60: number;
+}
+
+export interface PressureInfo {
+  cpu?: PressureMetric;
+  io?: PressureMetric;
+  memory?: PressureMetric;
 }
 
 export interface DiskMount {
@@ -192,6 +222,7 @@ export interface HostTelemetry {
   diskIo?: DiskIo[];
   gpu?: GpuTelemetry[];
   wan?: WanTelemetry;
+  pressure?: PressureInfo;
   network: NetworkInterface[];
   timestamp: number;
 }

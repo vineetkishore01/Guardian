@@ -20,6 +20,23 @@ export interface MemoryInfo {
   swapTotalBytes: number;
   swapUsedBytes: number;
   swapPercent: number;
+  /** Swap traffic from /proc/vmstat. Sustained non-zero both ways is thrashing. */
+  swapInBytesPerSec?: number;
+  swapOutBytesPerSec?: number;
+}
+
+/** Linux pressure-stall information from /proc/pressure/{cpu,io,memory}. */
+export interface PressureMetric {
+  some10: number;
+  some60: number;
+  full10: number;
+  full60: number;
+}
+
+export interface PressureInfo {
+  cpu?: PressureMetric;
+  io?: PressureMetric;
+  memory?: PressureMetric;
 }
 
 export interface DiskMount {
@@ -159,6 +176,7 @@ export interface HostTelemetry {
   fans?: FanSensor[];
   gpu?: GpuTelemetry[];
   wan?: WanTelemetry;
+  pressure?: PressureInfo;
   network: NetworkInterface[];
   throttle?: CpuThrottle;
   battery?: BatteryTelemetry;

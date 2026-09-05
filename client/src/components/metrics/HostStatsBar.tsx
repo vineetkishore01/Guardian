@@ -59,6 +59,13 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
   const tempSeverity = thermal ? severityFor(thermal.tempC, 75, 85) : 'ok';
 
   const swapPercent = host.memory.swapPercent || 0;
+  /*
+   * Swap had thresholds declared in METRIC_DEFINITIONS but nothing on the
+   * dashboard ever applied them, so a host sitting at 50% swap rendered the
+   * same flat grey as one at 0%. On a small-memory box that is the number that
+   * predicts trouble, so it gets the same treatment as every other metric.
+   */
+  const swapSeverity = severityFor(swapPercent, 40, 70);
 
   // Load relative to thread count: 2.35 means nothing until you know it is
   // spread across 8 threads.
@@ -132,7 +139,15 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
                 {formatBytes(host.memory.usedBytes)} / {formatBytes(host.memory.totalBytes)}
               </span>
               {host.memory.swapTotalBytes > 0 ? (
-                <span className="font-mono">
+                <span
+                  className={cn('font-mono', swapSeverity !== 'ok' && severityTextClass(swapSeverity))}
+                  title={
+                    host.memory.swapInBytesPerSec !== undefined ||
+                    host.memory.swapOutBytesPerSec !== undefined
+                      ? `Swap in ${formatRate(host.memory.swapInBytesPerSec || 0)}, out ${formatRate(host.memory.swapOutBytesPerSec || 0)}. Sustained traffic in both directions is thrashing.`
+                      : 'Swap in use. Sustained growth means the host is short of memory.'
+                  }
+                >
                   swap {formatBytes(host.memory.swapUsedBytes)} ({swapPercent.toFixed(0)}%)
                 </span>
               ) : (
