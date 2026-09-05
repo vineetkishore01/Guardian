@@ -260,6 +260,53 @@ export function deriveProblems(state: FullDashboardState): Problem[] {
     }
   }
 
+  /* --------------------------- service health --------------------------- */
+
+  /*
+   * These applications triage their own problems, so an entry here has already
+   * been judged worth reporting by something that understands the domain far
+   * better than a generic dashboard does. Passing them through unedited is more
+   * useful than trying to re-rank them.
+   */
+  for (const svc of state.serviceHealth ?? []) {
+    if (svc.unreachable) {
+      push(
+        `service:${svc.name}:unreachable`,
+        'warn',
+        'container',
+        `${svc.name} API unreachable`,
+        `Could not query the ${svc.service} API: ${svc.unreachable}`
+      );
+      continue;
+    }
+
+    for (const issue of svc.issues) {
+      push(
+        `service:${svc.name}:${issue.source}`,
+        issue.type === 'error' ? 'crit' : 'warn',
+        'container',
+        `${svc.name}: ${issue.source}`,
+        issue.message
+      );
+    }
+
+    /*
+     * Deliberately a high bar. Some failures are routine -- an indexer times
+     * out, a release turns out to be fake -- and alerting on a handful a day
+     * would bury the health entries above, which are the ones that mean
+     * something is actually misconfigured.
+     */
+    if ((svc.recentFailures ?? 0) >= 10) {
+      push(
+        `service:${svc.name}:failures`,
+        'warn',
+        'container',
+        `${svc.name}: ${svc.recentFailures} failures`,
+        `${svc.recentFailures} failed operations in the last ${svc.failureWindowHours}h.`
+      );
+    }
+  }
+
   /* ------------------------------- probes ------------------------------- */
 
   for (const probe of state.probes ?? []) {

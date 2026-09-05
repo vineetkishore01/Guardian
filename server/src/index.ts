@@ -25,6 +25,11 @@ import {
 } from './collectors/docker.js';
 import { collectTopProcesses } from './collectors/processes.js';
 import { getReclaimReport, startReclaimScanner, stopReclaimScanner } from './collectors/reclaim.js';
+import {
+  getServiceHealth,
+  startServiceHealthScanner,
+  stopServiceHealthScanner,
+} from './collectors/servicehealth.js';
 import { telemetryHistory, METRIC_KEYS } from './history.js';
 import { diskTrends } from './disktrend.js';
 import { deriveProblems } from './problems.js';
@@ -202,6 +207,7 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     // Produced by an independent slow timer; the loop only publishes whatever
     // the last scan left behind.
     reclaim: getReclaimReport() ?? undefined,
+    serviceHealth: getServiceHealth().length > 0 ? getServiceHealth() : undefined,
     config,
     history: globalHistory.getHistory(),
     sources: {
@@ -689,6 +695,7 @@ const server = app.listen(PORT, HOST, () => {
   // Slow collectors get their own timers so a directory walk or a stalled
   // service can never delay the telemetry snapshot.
   startReclaimScanner(() => latestState?.containers ?? []);
+  startServiceHealthScanner(() => latestState?.containers ?? []);
 });
 
 let shuttingDown = false;
@@ -706,6 +713,7 @@ function shutdown(signal: string) {
   diskTrends.flushAndSave();
   stopContainerStatsStreams();
   stopReclaimScanner();
+  stopServiceHealthScanner();
   logger.save();
 
   for (const client of sseClients) {

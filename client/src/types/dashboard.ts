@@ -74,6 +74,26 @@ export interface DiskTrend {
 /** Mirrors the Severity union in lib/utils. */
 export type ProblemSeverity = 'ok' | 'warn' | 'crit';
 
+/** One entry from an *arr application's own health endpoint. */
+export interface ServiceHealthIssue {
+  source: string;
+  type: 'warning' | 'error';
+  message: string;
+}
+
+/** Health and recent-failure state for one *arr service. */
+export interface ServiceHealthReport {
+  name: string;
+  service: string;
+  issues: ServiceHealthIssue[];
+  /** Failed operations inside the window; undefined when history was unavailable. */
+  recentFailures?: number;
+  failureWindowHours: number;
+  /** Set when the service could not be queried at all. */
+  unreachable?: string;
+  checkedAt: number;
+}
+
 /** One top-level folder in a download root. */
 export interface ReclaimEntry {
   name: string;
@@ -429,6 +449,8 @@ export interface FullDashboardState {
   problems?: Problem[];
   /** Download-volume cross-reference. Absent until the first slow scan. */
   reclaim?: ReclaimReport;
+  /** Per-service health from the *arr APIs. Populated by a slow timer. */
+  serviceHealth?: ServiceHealthReport[];
   /** Fill projections, keyed by mount point. Absent until enough history exists. */
   diskTrends?: DiskTrend[];
   config: UserConfigStore;
