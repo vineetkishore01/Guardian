@@ -16,23 +16,62 @@ export interface ProbeTarget {
   port: number;
   path: string;
   notes?: string;
+  /** Sent as `X-Api-Key`, so an authenticated service reports health instead of 401. */
+  apiKey?: string;
 }
 
 const PROBE_TIMEOUT_MS = 3000;
 const CACHE_TTL_MS = 60_000;
 const MAX_TARGETS = 40;
 
-/** Endpoints that answer more usefully than "/" on these well-known services. */
+/*
+ * Endpoints that answer more usefully than "/" on these well-known services.
+ *
+ * The *arr API version is per-application, not shared: Radarr, Sonarr, Lidarr and
+ * Readarr are all v3, while Prowlarr is still v1. Probing Radarr at `/api/v1/...`
+ * asks for a route that does not exist, so a perfectly healthy instance is
+ * reported by whatever its 404 handler decides to do.
+ */
 const HEALTH_PATHS: Record<string, string> = {
   prowlarr: '/api/v1/health',
-  sonarr: '/api/v1/health',
-  radarr: '/api/v1/health',
+  sonarr: '/api/v3/health',
+  radarr: '/api/v3/health',
   lidarr: '/api/v1/health',
   readarr: '/api/v1/health',
   bazarr: '/api/system/status',
   jellyfin: '/health',
   emby: '/health',
 };
+
+/*
+ * Default listen ports for services that commonly run inside another
+ * container's network namespace (`network_mode: container:gluetun`).
+ *
+ * Such a container publishes nothing of its own -- the *parent* publishes on its
+ * behalf -- so port-to-container attribution has to be inferred. Without this,
+ * Prowlarr behind Gluetun is probed and labelled as "Gluetun", and Prowlarr
+ * itself is never probed at all.
+ */
+const DEFAULT_SERVICE_PORTS: Record<string, number> = {
+  prowlarr: 9696,
+  radarr: 7878,
+  sonarr: 8989,
+  lidarr: 8686,
+  readarr: 8787,
+  bazarr: 6767,
+  qbittorrent: 8080,
+  transmission: 9091,
+  sabnzbd: 8080,
+  deluge: 8112,
+};
+
+function defaultPortFor(name: string): number | null {
+  const key = name.toLowerCase();
+  for (const [service, port] of Object.entries(DEFAULT_SERVICE_PORTS)) {
+    if (key.includes(service)) return port;
+  }
+  return null;
+}
 
 function healthPathFor(name: string): string {
   const key = name.toLowerCase();
@@ -63,21 +102,49 @@ export function buildProbeTargets(
   bookmarks: CustomAppBookmark[] = []
 ): ProbeTarget[] {
   const byPort = new Map<number, ProbeTarget>();
+  const running = containers.filter((c) => !c.hidden && c.state === 'running');
 
-  for (const c of containers) {
-    if (c.hidden || c.state !== 'running') continue;
+  const targetFor = (c: ContainerItem, port: number, notes?: string): ProbeTarget => ({
+    name: c.displayName || c.name,
+    port,
+    path: healthPathFor(c.name),
+    notes: notes ?? c.composeProject,
+    // The API key the operator already supplied for the in-card widget. Reusing
+    // it turns a permanent "unauthorized" row into a real health check.
+    apiKey: c.integrationConfig?.apiKey,
+  });
 
+  /*
+   * Namespace guests first, so they win the port they actually own.
+   *
+   * A container with `network_mode: container:X` has no ports of its own; X
+   * publishes them. Attributing the port to X is wrong twice over -- the guest
+   * is never checked, and the parent is checked against a service it does not
+   * run. Where the guest's well-known port is among the parent's published
+   * ports, the guest is the honest owner of that row.
+   */
+  for (const c of running) {
+    if (!c.networkParent || (c.ports || []).length > 0) continue;
+
+    const parent = running.find((p) => p.name === c.networkParent);
+    if (!parent) continue;
+
+    const wanted = defaultPortFor(c.name);
+    if (!wanted) continue;
+
+    const published = (parent.ports || []).find((p) => p.privatePort === wanted && p.publicPort);
+    if (!published?.publicPort || byPort.has(published.publicPort)) continue;
+
+    byPort.set(published.publicPort, targetFor(c, published.publicPort, `via ${parent.name}`));
+  }
+
+  for (const c of running) {
     for (const p of c.ports || []) {
       const port = p.publicPort;
       // Only published ports are reachable from where Guardian runs.
       if (!port || byPort.has(port)) continue;
 
-      byPort.set(port, {
-        name: c.displayName || c.name,
-        port,
-        path: healthPathFor(c.name),
-        notes: c.composeProject,
-      });
+      byPort.set(port, targetFor(c, port));
     }
   }
 
@@ -113,22 +180,39 @@ function probeUrl(target: ProbeTarget, hostIp: string): Promise<ServiceProbeResu
         notes: notes ?? target.notes,
       });
 
-    const req = http.get(
-      url,
-      { timeout: PROBE_TIMEOUT_MS, headers: { 'User-Agent': 'Guardian-Prober/1.0' } },
-      (res) => {
-        res.resume(); // Drain so the socket can be released.
+    const headers: Record<string, string> = { 'User-Agent': 'Guardian-Prober/1.0' };
+    if (target.apiKey) headers['X-Api-Key'] = target.apiKey;
 
-        const code = res.statusCode || null;
-        let status: ServiceProbeResult['status'] = 'up';
-        if (code === 401 || code === 403) status = 'unauthorized';
-        else if (code && code >= 300 && code < 400) status = 'redirect';
-        else if (code && code >= 200 && code < 400) status = 'up';
-        else status = 'down';
+    const req = http.get(url, { timeout: PROBE_TIMEOUT_MS, headers }, (res) => {
+      res.resume(); // Drain so the socket can be released.
 
-        finish(code, status);
+      const code = res.statusCode || null;
+
+      /*
+       * "Down" must mean the service did not answer.
+       *
+       * Any HTTP status at all proves something is listening and serving. A
+       * reverse proxy with no route for `/` answers 404, and reporting that as
+       * "down" put two permanently-red rows in the endpoint table for a Traefik
+       * that was working perfectly -- which is exactly how an operator learns to
+       * stop reading the table. Only a 5xx (the service answered, and answered
+       * that it is broken) or a transport failure is a genuine outage.
+       */
+      let status: ServiceProbeResult['status'] = 'up';
+      let notes: string | undefined;
+
+      if (code === 401 || code === 403) status = 'unauthorized';
+      else if (code && code >= 300 && code < 400) status = 'redirect';
+      else if (code && code >= 500) {
+        status = 'down';
+        notes = `server error ${code}`;
+      } else if (code && code >= 400) {
+        status = 'up';
+        notes = `reachable, no route at ${target.path}`;
       }
-    );
+
+      finish(code, status, notes);
+    });
 
     req.on('timeout', () => {
       req.destroy();
