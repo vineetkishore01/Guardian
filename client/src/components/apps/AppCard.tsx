@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown, ArrowDownToLine , HardDrive } from 'lucide-react';
+import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown, ArrowDownToLine , HardDrive, Gauge } from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import {
   resolveContainerUrl,
@@ -284,6 +284,10 @@ export function AppCard({
                 'rounded px-1.5 py-0.5 font-mono font-semibold shrink-0',
                 item.widget.badgeColor === 'ok' && 'bg-ok-soft text-ok',
                 item.widget.badgeColor === 'warn' && 'bg-warn-soft text-warn',
+                // Without this the most urgent state fell through every branch
+                // and rendered unstyled -- the one badge you must not miss was
+                // the only one with no colour at all.
+                item.widget.badgeColor === 'crit' && 'bg-crit-soft text-crit',
                 item.widget.badgeColor === 'brand' && 'bg-brand-soft text-brand',
                 (!item.widget.badgeColor || item.widget.badgeColor === 'muted') && 'bg-muted text-muted-foreground'
               )}
@@ -291,6 +295,23 @@ export function AppCard({
               {item.widget.badge}
             </span>
           )}
+        </div>
+      )}
+
+      {/*
+        * The integrations already compute these -- Jellyfin's direct-vs-transcode
+        * split, the *arr queue breakdown -- and until now every one of them was
+        * thrown away at the render boundary. They are the detail behind the
+        * badge, so they sit directly under it.
+        */}
+      {item.widget?.metrics && item.widget.metrics.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 px-0.5 text-2xs text-muted-foreground">
+          {item.widget.metrics.map((m) => (
+            <span key={m.label} className="inline-flex items-baseline gap-1">
+              <span className="truncate">{m.label}</span>
+              <span className="font-mono font-semibold text-foreground">{m.value}</span>
+            </span>
+          ))}
         </div>
       )}
 
@@ -355,7 +376,28 @@ export function AppCard({
                 {formatRate((container.blockReadBytesPerSec || 0) + (container.blockWriteBytesPerSec || 0))}
               </span>
             )}
-            {container.cpuPercent !== undefined && `${container.cpuPercent.toFixed(1)}%`}
+            {container.cpuPercent !== undefined && (
+              <span
+                className={cn(
+                  container.cpuThrottlingNow && 'text-warn font-semibold',
+                  !container.cpuThrottlingNow && (container.cpuPercentOfLimit ?? 0) >= 90 && 'text-warn'
+                )}
+                title={
+                  container.cpuLimitCores
+                    ? `${container.cpuPercent.toFixed(1)}% of one core; capped at ${container.cpuLimitCores} CPU, so ${(container.cpuPercentOfLimit ?? 0).toFixed(0)}% of its own allowance.${container.cpuThrottlingNow ? ' Currently being throttled.' : ''}`
+                    : `${container.cpuPercent.toFixed(1)}% of one core. No CPU limit set.`
+                }
+              >
+                {container.cpuPercent.toFixed(1)}%
+                {/* The share of its own cap is the number that predicts throttling. */}
+                {container.cpuPercentOfLimit !== undefined && (
+                  <span className="text-muted-foreground">
+                    {' '}({container.cpuPercentOfLimit.toFixed(0)}% cap)
+                  </span>
+                )}
+                {container.cpuThrottlingNow && <Gauge className="ml-1 inline h-2.5 w-2.5" />}
+              </span>
+            )}
             {container.cpuPercent !== undefined && container.memoryBytes !== undefined && ' · '}
             {container.memoryBytes !== undefined && formatBytes(container.memoryBytes, 0)}
           </div>

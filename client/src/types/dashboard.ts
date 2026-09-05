@@ -210,6 +210,10 @@ export interface ContainerItem {
   cpuPercent?: number;
   memoryBytes?: number;
   memoryLimitBytes?: number;
+  memoryLimitIsExplicit?: boolean;
+  cpuLimitCores?: number;
+  cpuPercentOfLimit?: number;
+  cpuThrottlingNow?: boolean;
   networkRxBytesPerSec?: number;
   networkTxBytesPerSec?: number;
   blockReadBytesPerSec?: number;

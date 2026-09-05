@@ -114,6 +114,11 @@ interface RawDockerStats {
     };
     system_cpu_usage?: number;
     online_cpus?: number;
+    throttling_data?: {
+      periods?: number;
+      throttled_periods?: number;
+      throttled_time?: number;
+    };
   };
   precpu_stats?: {
     cpu_usage?: {
@@ -160,6 +165,9 @@ interface RawDockerSystemDf {
 
 interface CachedStat {
   cpuPercent: number;
+  /** Monotonic since container start; only a delta proves throttling now. */
+  throttledPeriods?: number;
+  throttlingNow?: boolean;
   memoryBytes: number;
   memoryLimitBytes: number;
   networkRxBytesPerSec?: number;
@@ -189,6 +197,19 @@ function computeStat(raw: RawDockerStats, now: number, prev?: CachedStat): Cache
       cpuPercent = Math.round((cpuDelta / systemDelta) * onlineCpus * 1000) / 10;
     }
   }
+
+  /*
+   * cgroup throttling counters arrive in every stats frame and were previously
+   * discarded. `throttled_periods` is monotonic, so only a rise between two
+   * frames is evidence the container is being held back right now -- an
+   * absolute count tells you it happened at some point since it started, which
+   * is far less actionable.
+   */
+  const throttledPeriods = raw.cpu_stats?.throttling_data?.throttled_periods;
+  const throttlingNow =
+    throttledPeriods !== undefined &&
+    prev?.throttledPeriods !== undefined &&
+    throttledPeriods > prev.throttledPeriods;
 
   let memoryBytes = 0;
   let memoryLimitBytes = 0;
@@ -265,6 +286,8 @@ function computeStat(raw: RawDockerStats, now: number, prev?: CachedStat): Cache
 
   return {
     cpuPercent,
+    throttledPeriods,
+    throttlingNow,
     memoryBytes,
     memoryLimitBytes,
     networkRxBytesPerSec,
@@ -429,7 +452,24 @@ interface RawInspect {
       Log?: Array<{ Start?: string; ExitCode?: number; Output?: string }>;
     };
   };
-  HostConfig?: { NetworkMode?: string };
+  HostConfig?: {
+    NetworkMode?: string;
+    /*
+     * The container's own limits. Without these, a container's CPU number is
+     * only meaningful against the whole host: qBittorrent capped at 0.75 CPU
+     * and sitting at 57% of one core is actually at 77% of what it is allowed,
+     * which is the number that predicts it being throttled.
+     *
+     * `Memory` also disambiguates the memory reading. For an unlimited
+     * container the cgroup limit reported in the stats frame is total host RAM,
+     * so "% of limit" silently became "% of host RAM" and warned about
+     * containers that were doing nothing wrong.
+     */
+    NanoCpus?: number;
+    CpuQuota?: number;
+    CpuPeriod?: number;
+    Memory?: number;
+  };
 }
 
 /** Docker uses a zero-ish sentinel for "never". */
@@ -448,6 +488,30 @@ export interface ContainerDetail {
   finishedAt?: number;
   healthLog?: HealthProbe[];
   networkMode?: string;
+  /** Cores the container is allowed, from NanoCpus or CpuQuota/CpuPeriod. */
+  cpuLimitCores?: number;
+  /** An explicit `-m` limit, as opposed to the cgroup default of all host RAM. */
+  memoryLimitConfigured?: number;
+}
+
+/**
+ * How many cores the container is allowed.
+ *
+ * Compose's `cpus:` becomes NanoCpus; the older `--cpu-quota`/`--cpu-period`
+ * pair expresses the same thing as a ratio. Either may be absent, and zero
+ * means unlimited in both cases.
+ */
+function deriveCpuLimitCores(hostConfig?: RawInspect['HostConfig']): number | undefined {
+  if (!hostConfig) return undefined;
+
+  const nano = hostConfig.NanoCpus;
+  if (nano && nano > 0) return nano / 1e9;
+
+  const quota = hostConfig.CpuQuota;
+  const period = hostConfig.CpuPeriod;
+  if (quota && quota > 0 && period && period > 0) return quota / period;
+
+  return undefined;
 }
 
 /**
@@ -470,6 +534,9 @@ async function fetchContainerDetail(id: string): Promise<ContainerDetail | null>
       startedAt: parseDockerTime(state.StartedAt),
       finishedAt: parseDockerTime(state.FinishedAt),
       networkMode: raw.HostConfig?.NetworkMode,
+      cpuLimitCores: deriveCpuLimitCores(raw.HostConfig),
+      memoryLimitConfigured:
+        raw.HostConfig?.Memory && raw.HostConfig.Memory > 0 ? raw.HostConfig.Memory : undefined,
       healthLog: state.Health?.Log?.slice(-5).map((entry) => ({
         start: parseDockerTime(entry.Start) ?? 0,
         exitCode: entry.ExitCode ?? 0,
@@ -563,8 +630,20 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
         composeProject: c.Labels?.['com.docker.compose.project'],
         ports,
         cpuPercent: liveStat?.cpuPercent,
+        cpuLimitCores: detail?.cpuLimitCores,
+        /*
+         * Docker's CPU% is per-core (100% = one full core), so the share of the
+         * container's own allowance is that figure divided by the cores it may
+         * use. This is what turns "57%" into "77% of cap".
+         */
+        cpuPercentOfLimit:
+          liveStat?.cpuPercent !== undefined && detail?.cpuLimitCores
+            ? Math.round((liveStat.cpuPercent / (detail.cpuLimitCores * 100)) * 1000) / 10
+            : undefined,
+        cpuThrottlingNow: liveStat?.throttlingNow,
         memoryBytes: liveStat?.memoryBytes,
         memoryLimitBytes: liveStat?.memoryLimitBytes,
+        memoryLimitIsExplicit: detail?.memoryLimitConfigured !== undefined,
         blockReadBytesPerSec: liveStat?.blockReadBytesPerSec,
         blockWriteBytesPerSec: liveStat?.blockWriteBytesPerSec,
         networkRxBytesPerSec: liveStat?.networkRxBytesPerSec,

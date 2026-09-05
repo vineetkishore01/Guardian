@@ -253,6 +253,14 @@ export interface ContainerItem {
   cpuPercent?: number;
   memoryBytes?: number;
   memoryLimitBytes?: number;
+  /** True when the operator set an explicit `-m`; otherwise the limit is host RAM. */
+  memoryLimitIsExplicit?: boolean;
+  /** Cores this container may use, when capped. */
+  cpuLimitCores?: number;
+  /** Share of its own CPU allowance, not of the host. */
+  cpuPercentOfLimit?: number;
+  /** cgroup throttling counter rose since the previous sample. */
+  cpuThrottlingNow?: boolean;
   networkRxBytesPerSec?: number;
   networkTxBytesPerSec?: number;
   blockReadBytesPerSec?: number;

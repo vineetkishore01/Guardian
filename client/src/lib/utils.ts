@@ -242,7 +242,13 @@ export function containerIssues(c: ContainerItem): ContainerIssue[] {
     });
   }
 
-  if (c.memoryLimitBytes && c.memoryBytes && c.memoryLimitBytes > 0) {
+  /*
+   * Only meaningful against a limit the operator actually set. For an
+   * unconstrained container the cgroup reports total host RAM as the "limit",
+   * which turned this into "% of host RAM" and warned about containers that
+   * were behaving perfectly well.
+   */
+  if (c.memoryLimitIsExplicit && c.memoryLimitBytes && c.memoryBytes && c.memoryLimitBytes > 0) {
     const share = (c.memoryBytes / c.memoryLimitBytes) * 100;
     if (share >= 90) {
       issues.push({
@@ -251,6 +257,27 @@ export function containerIssues(c: ContainerItem): ContainerIssue[] {
         detail: `Using ${share.toFixed(0)}% of its memory limit — the next spike may trigger an OOM kill.`,
       });
     }
+  }
+
+  /*
+   * Being throttled is not the same as being busy. A container pinned against
+   * its own quota is slow for a reason you can fix by raising the cap, which is
+   * invisible if all you see is a CPU percentage measured against the host.
+   */
+  if (c.cpuThrottlingNow) {
+    issues.push({
+      severity: 'warn',
+      label: 'CPU throttled',
+      detail: c.cpuLimitCores
+        ? `Held at its ${c.cpuLimitCores} CPU limit by the kernel. Raise the cap or reduce its work.`
+        : 'The kernel is throttling this container against its CPU quota.',
+    });
+  } else if ((c.cpuPercentOfLimit ?? 0) >= 90) {
+    issues.push({
+      severity: 'warn',
+      label: `${(c.cpuPercentOfLimit ?? 0).toFixed(0)}% of CPU cap`,
+      detail: `Using ${(c.cpuPercentOfLimit ?? 0).toFixed(0)}% of its ${c.cpuLimitCores} CPU allowance — close to being throttled.`,
+    });
   }
 
   return issues;
