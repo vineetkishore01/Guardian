@@ -446,6 +446,12 @@ export function EditAppModal({
               <option value="plex">Plex Media Server</option>
               <option value="jellyfin">Jellyfin Media Server</option>
               <option value="qbittorrent">qBittorrent</option>
+              {/* These were supported by the server but missing from this list,
+                  so the only way to configure one was to hope auto-detect
+                  matched the container name. */}
+              <option value="radarr">Radarr</option>
+              <option value="sonarr">Sonarr</option>
+              <option value="bazarr">Bazarr</option>
               <option value="pihole">Pi-hole DNS</option>
               <option value="adguard">AdGuard Home</option>
               <option value="none">None (Disable Widget)</option>

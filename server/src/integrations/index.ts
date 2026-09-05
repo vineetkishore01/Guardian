@@ -69,6 +69,7 @@ function detectIntegrationType(item: ContainerItem | CustomAppBookmark): string 
   if (name.includes('adguard') || image.includes('adguard')) return 'adguard';
   if (name.includes('radarr') || image.includes('radarr')) return 'radarr';
   if (name.includes('sonarr') || image.includes('sonarr')) return 'sonarr';
+  if (name.includes('bazarr') || image.includes('bazarr')) return 'bazarr';
   return null;
 }
 
@@ -381,6 +382,75 @@ async function fetchArrWidget(baseUrl: string, apiKey: string | undefined, label
 }
 
 /**
+ * Fetches widget telemetry for Bazarr.
+ *
+ * `/api/badges` is the whole dashboard in one call: how much is still missing
+ * subtitles, how many providers are unhappy, and -- the reason this is worth
+ * having -- the live state of the SignalR connections to Sonarr and Radarr.
+ *
+ * Those connections dropping and reconnecting is a genuinely silent failure.
+ * Bazarr stays "running", its healthcheck is fine and its port answers, while
+ * its scheduled syncs quietly skip because the previous run is still stuck. The
+ * only other evidence is a line in its log every few minutes. Here it is a
+ * field, so it can be watched instead of discovered.
+ */
+async function fetchBazarrWidget(baseUrl: string, apiKey?: string): Promise<AppWidgetData> {
+  if (!apiKey) {
+    throw new Error('No API key configured (Bazarr requires one)');
+  }
+  const badges = await httpFetchJson<{
+    episodes?: number;
+    movies?: number;
+    providers?: number;
+    status?: number;
+    sonarr_signalr?: string;
+    radarr_signalr?: string;
+  }>(`${baseUrl}/api/badges`, { 'X-API-KEY': apiKey });
+
+  const wantedEpisodes = badges.episodes ?? 0;
+  const wantedMovies = badges.movies ?? 0;
+  const wanted = wantedEpisodes + wantedMovies;
+  const providerIssues = badges.providers ?? 0;
+
+  // Bazarr reports the string "LIVE" when a hub is connected.
+  const isLive = (v?: string) => (v ?? '').toUpperCase() === 'LIVE';
+  const sonarrLive = isLive(badges.sonarr_signalr);
+  const radarrLive = isLive(badges.radarr_signalr);
+  const dropped = [!sonarrLive ? 'Sonarr' : null, !radarrLive ? 'Radarr' : null].filter(
+    (v): v is string => v !== null
+  );
+
+  const metrics: Array<{ label: string; value: string | number }> = [
+    { label: 'Wanted', value: wanted },
+    { label: 'Episodes', value: wantedEpisodes },
+    { label: 'Movies', value: wantedMovies },
+    { label: 'Providers failing', value: providerIssues },
+  ];
+
+  return {
+    type: 'arr',
+    title: 'Bazarr',
+    badge: dropped.length > 0 ? `${dropped.join(' + ')} offline` : wanted > 0 ? `${wanted} Wanted` : 'Idle',
+    /*
+     * A dropped hub outranks a backlog: missing subtitles is the normal state
+     * of affairs, whereas a disconnected hub means the backlog is not being
+     * worked through at all.
+     */
+    badgeColor: dropped.length > 0 ? 'crit' : providerIssues > 0 ? 'warn' : wanted > 0 ? 'brand' : 'muted',
+    subtitle:
+      dropped.length > 0
+        ? `SignalR disconnected from ${dropped.join(' and ')}`
+        : `${wanted} item(s) wanting subtitles`,
+    statusText:
+      providerIssues > 0 && dropped.length === 0
+        ? `${providerIssues} subtitle provider(s) failing`
+        : undefined,
+    metrics,
+    updatedAt: Date.now(),
+  };
+}
+
+/**
  * Fetches widget telemetry for a given app / container.
  */
 export async function getAppWidgetData(
@@ -423,6 +493,9 @@ export async function getAppWidgetData(
         break;
       case 'sonarr':
         result = await fetchArrWidget(baseUrl, config.apiKey, 'Sonarr');
+        break;
+      case 'bazarr':
+        result = await fetchBazarrWidget(baseUrl, config.apiKey);
         break;
       default:
         return null;
