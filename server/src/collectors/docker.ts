@@ -879,6 +879,44 @@ function demuxDockerLogs(buffer: Buffer): ContainerLogLine[] {
   return lines;
 }
 
+export interface ContainerMount {
+  /** Path on the host. */
+  source: string;
+  /** Path as the container sees it. */
+  destination: string;
+}
+
+/**
+ * A container's bind mounts, for translating its paths into host paths.
+ *
+ * A download client reports paths in its own namespace -- `/downloads/Foo` --
+ * which means nothing to a process outside it. The daemon knows the mapping, so
+ * asking it is more reliable than making the operator restate the layout in
+ * configuration and keep the two in sync.
+ *
+ * Fetched on demand rather than folded into the container list: this is only
+ * needed by the slow reclaim scan, and adding it to every snapshot would put a
+ * mount table for every container into each SSE frame.
+ */
+export async function fetchContainerMounts(id: string): Promise<ContainerMount[]> {
+  try {
+    const raw = await dockerApiRequest<{
+      Mounts?: Array<{ Source?: string; Destination?: string }>;
+    }>(`/containers/${id}/json`);
+
+    return (raw.Mounts ?? [])
+      .filter((m): m is { Source: string; Destination: string } =>
+        Boolean(m.Source && m.Destination)
+      )
+      .map((m) => ({ source: m.Source, destination: m.Destination }))
+      // Longest destination first, so `/downloads/complete` wins over
+      // `/downloads` when both could match a path.
+      .sort((a, b) => b.destination.length - a.destination.length);
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchContainerLogs(
   idOrName: string,
   tail: number = 200

@@ -3,6 +3,7 @@ import { AlertCircle, RefreshCw, Info } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
 import { ProblemsStrip } from './components/layout/ProblemsStrip';
+import { ReclaimPanel } from './components/storage/ReclaimPanel';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
 import { SystemHealthStrip } from './components/metrics/SystemHealthStrip';
 import { StorageGauges } from './components/metrics/StorageGauges';
@@ -231,6 +232,12 @@ export function App() {
             }
           />
           <StorageGauges disks={disks} trends={data?.diskTrends} onOpenHistory={() => openMetric('disk')} />
+          {/* Sits under the gauges because it explains part of what fills them. */}
+          {data?.reclaim && (
+            <div className="mt-3">
+              <ReclaimPanel report={data.reclaim} />
+            </div>
+          )}
         </section>
 
         <section aria-labelledby="network-heading">

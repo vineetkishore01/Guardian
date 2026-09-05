@@ -74,6 +74,44 @@ export interface DiskTrend {
 /** Mirrors the Severity union in lib/utils. */
 export type ProblemSeverity = 'ok' | 'warn' | 'crit';
 
+/** One top-level folder in a download root. */
+export interface ReclaimEntry {
+  name: string;
+  path: string;
+  bytes: number;
+  fileCount: number;
+  /** The download client still has a torrent pointing at this path. */
+  isActive: boolean;
+  torrentState?: string;
+  /** Download finished (seeding). Only these are fair evidence about linking. */
+  isSeeding: boolean;
+  /** Files with nlink > 1, i.e. already hard-linked into a library. */
+  linkedFiles: number;
+  linkedBytes: number;
+  reclaimable: boolean;
+}
+
+/** Cross-reference of the download volume against the download client. */
+export interface ReclaimReport {
+  generatedAt: number;
+  roots: string[];
+  scannedRoots: number;
+  totalBytes: number;
+  entries: ReclaimEntry[];
+  reclaimableBytes: number;
+  reclaimableCount: number;
+  totalFiles: number;
+  /** How many files are shared with a library rather than duplicated. */
+  linkedFiles: number;
+  /* Restricted to finished downloads, which is the only fair denominator for
+   * "are imports linking or copying?". */
+  finishedFiles: number;
+  finishedLinkedFiles: number;
+  /** Bytes held by finished downloads that share nothing with a library. */
+  finishedUnlinkedBytes: number;
+  source: string;
+}
+
 /** A single thing currently wrong, from any source. Derived server-side. */
 export interface Problem {
   /** Stable across samples and keyed on the subject, never the reading. */
@@ -389,6 +427,8 @@ export interface FullDashboardState {
   probes: ServiceProbeResult[];
   /** Everything currently wrong, worst first. */
   problems?: Problem[];
+  /** Download-volume cross-reference. Absent until the first slow scan. */
+  reclaim?: ReclaimReport;
   /** Fill projections, keyed by mount point. Absent until enough history exists. */
   diskTrends?: DiskTrend[];
   config: UserConfigStore;
