@@ -30,6 +30,7 @@ import {
   startServiceHealthScanner,
   stopServiceHealthScanner,
 } from './collectors/servicehealth.js';
+import { getLogSignals, startLogScanner, stopLogScanner } from './collectors/logscan.js';
 import { telemetryHistory, METRIC_KEYS } from './history.js';
 import { diskTrends } from './disktrend.js';
 import { deriveProblems } from './problems.js';
@@ -208,6 +209,7 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     // the last scan left behind.
     reclaim: getReclaimReport() ?? undefined,
     serviceHealth: getServiceHealth().length > 0 ? getServiceHealth() : undefined,
+    logSignals: getLogSignals().length > 0 ? getLogSignals() : undefined,
     config,
     history: globalHistory.getHistory(),
     sources: {
@@ -696,6 +698,7 @@ const server = app.listen(PORT, HOST, () => {
   // service can never delay the telemetry snapshot.
   startReclaimScanner(() => latestState?.containers ?? []);
   startServiceHealthScanner(() => latestState?.containers ?? []);
+  startLogScanner(() => latestState?.containers ?? []);
 });
 
 let shuttingDown = false;
@@ -714,6 +717,7 @@ function shutdown(signal: string) {
   stopContainerStatsStreams();
   stopReclaimScanner();
   stopServiceHealthScanner();
+  stopLogScanner();
   logger.save();
 
   for (const client of sseClients) {

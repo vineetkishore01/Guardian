@@ -919,11 +919,21 @@ export async function fetchContainerMounts(id: string): Promise<ContainerMount[]
 
 export async function fetchContainerLogs(
   idOrName: string,
-  tail: number = 200
+  tail: number = 200,
+  sinceEpochSec?: number
 ): Promise<ContainerLogLine[]> {
   const safeTail = Math.min(Math.max(Math.round(tail) || 200, 1), 2000);
+  /*
+   * `since` bounds the read to what has appeared recently, which is what makes
+   * repeated sampling affordable: without it every pass re-reads the same tail
+   * and there is no way to tell an old error from a new one.
+   */
+  const sinceParam =
+    sinceEpochSec && Number.isFinite(sinceEpochSec)
+      ? `&since=${Math.floor(sinceEpochSec)}`
+      : '';
   const buffer = await dockerRawRequest(
-    `/containers/${encodeURIComponent(idOrName)}/logs?stdout=1&stderr=1&timestamps=1&tail=${safeTail}`
+    `/containers/${encodeURIComponent(idOrName)}/logs?stdout=1&stderr=1&timestamps=1&tail=${safeTail}${sinceParam}`
   );
   return demuxDockerLogs(buffer);
 }

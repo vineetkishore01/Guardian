@@ -307,6 +307,38 @@ export function deriveProblems(state: FullDashboardState): Problem[] {
     }
   }
 
+  /* ------------------------------ log signals ---------------------------- */
+
+  /*
+   * A container logging errors steadily is the "up but broken" case that
+   * nothing else here can see. The bar is a sustained rate rather than any
+   * occurrence, because almost everything logs the occasional error and
+   * reporting each one would drown the list.
+   *
+   * stderr volume is deliberately not a trigger -- see logscan.ts.
+   */
+  for (const signal of state.logSignals ?? []) {
+    /*
+     * Either loud right now, or quietly wrong for a while. The second test is
+     * what catches the slow failures -- a client reconnecting every few minutes
+     * never approaches a meaningful per-minute rate but is plainly broken
+     * because it never stops.
+     */
+    const loud = signal.errorsPerMin >= 2;
+    const persistent = signal.consecutiveScans >= 3;
+    if (!loud && !persistent) continue;
+
+    problems.push({
+      id: `logs:${signal.containerName}`,
+      severity: signal.errorsPerMin >= 10 ? 'crit' : 'warn',
+      scope: 'container',
+      label: `${signal.name} logging errors`,
+      detail: signal.sample
+        ? `${signal.errorsPerMin}/min for ${signal.consecutiveScans} scans: ${signal.sample}`
+        : `${signal.errorsPerMin} error lines per minute across ${signal.consecutiveScans} scans.`,
+    });
+  }
+
   /* ------------------------------- probes ------------------------------- */
 
   for (const probe of state.probes ?? []) {

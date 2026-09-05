@@ -84,6 +84,22 @@ export interface DiskTrend {
   spanHours: number;
 }
 
+/** Log-derived error signal for one container. See collectors/logscan.ts. */
+export interface ContainerLogSignal {
+  name: string;
+  containerName: string;
+  /** Context only: many healthy programs log everything to stderr. */
+  stderrPerMin: number;
+  errorsPerMin: number;
+  errorLines: number;
+  windowSec: number;
+  /** Consecutive scans with at least one error; the persistence signal. */
+  consecutiveScans: number;
+  /** First matching line in the window, for an actionable detail. */
+  sample?: string;
+  checkedAt: number;
+}
+
 /** One entry from an *arr application's own health endpoint. */
 export interface ServiceHealthIssue {
   source: string;
@@ -501,6 +517,8 @@ export interface FullDashboardState {
   reclaim?: ReclaimReport;
   /** Per-service health from the *arr APIs. Populated by a slow timer. */
   serviceHealth?: ServiceHealthReport[];
+  /** Containers whose logs show errors. Populated by a slow timer. */
+  logSignals?: ContainerLogSignal[];
   /** Fill projections, keyed by mount point. Absent until enough history exists. */
   diskTrends?: DiskTrend[];
   config: UserConfigStore;
