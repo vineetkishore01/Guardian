@@ -472,12 +472,20 @@ export interface DashboardSettings {
   customHostUrl?: string;
   refreshIntervalSec: number;
   title: string;
-  /** Where to POST alerts. Empty disables alerting entirely. */
-  alertWebhookUrl?: string;
   /** Only notify at or above this severity. Defaults to warn. */
   alertMinSeverity?: 'warn' | 'crit';
   /** How long before an unresolved problem is mentioned again. */
   alertCooldownMinutes?: number;
+  /*
+   * Alert channels. Each needs both of its fields before it is attempted; half
+   * a credential pair cannot address anyone and firing anyway only produces log
+   * noise that looks like a real outage.
+   */
+  alertTelegramBotToken?: string;
+  alertTelegramChatId?: string;
+  /** WhatsApp via CallMeBot. Number includes the country code. */
+  alertWhatsappPhone?: string;
+  alertWhatsappApiKey?: string;
 }
 
 export interface UserConfigStore {

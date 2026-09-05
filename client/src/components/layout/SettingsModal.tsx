@@ -36,7 +36,10 @@ export function SettingsModal({
   const [customHostUrl, setCustomHostUrl] = useState('');
   const [title, setTitle] = useState('');
   const [refreshInterval, setRefreshInterval] = useState(15);
-  const [alertWebhookUrl, setAlertWebhookUrl] = useState('');
+  const [tgToken, setTgToken] = useState('');
+  const [tgChatId, setTgChatId] = useState('');
+  const [waPhone, setWaPhone] = useState('');
+  const [waApiKey, setWaApiKey] = useState('');
   const [alertMinSeverity, setAlertMinSeverity] = useState<'warn' | 'crit'>('warn');
   const [alertCooldownMinutes, setAlertCooldownMinutes] = useState(60);
   const [saving, setSaving] = useState(false);
@@ -52,7 +55,10 @@ export function SettingsModal({
     setCustomHostUrl(settings?.customHostUrl || '');
     setTitle(settings?.title || 'Guardian Dashboard');
     setRefreshInterval(settings?.refreshIntervalSec || 15);
-    setAlertWebhookUrl(settings?.alertWebhookUrl || '');
+    setTgToken(settings?.alertTelegramBotToken || '');
+    setTgChatId(settings?.alertTelegramChatId || '');
+    setWaPhone(settings?.alertWhatsappPhone || '');
+    setWaApiKey(settings?.alertWhatsappApiKey || '');
     setAlertMinSeverity(settings?.alertMinSeverity || 'warn');
     setAlertCooldownMinutes(settings?.alertCooldownMinutes || 60);
     setError(null);
@@ -70,9 +76,15 @@ export function SettingsModal({
         customHostUrl: customHostUrl.trim() || undefined,
         title: title.trim() || 'Guardian Dashboard',
         refreshIntervalSec: Number(refreshInterval),
-        // Sent as empty string, not undefined, so clearing the field actually
-        // disables alerting rather than silently keeping the previous target.
-        alertWebhookUrl: alertWebhookUrl.trim(),
+        /*
+         * Sent as empty strings rather than undefined, so clearing a field
+         * actually disables that channel instead of silently keeping the
+         * previous credentials.
+         */
+        alertTelegramBotToken: tgToken.trim(),
+        alertTelegramChatId: tgChatId.trim(),
+        alertWhatsappPhone: waPhone.trim(),
+        alertWhatsappApiKey: waApiKey.trim(),
         alertMinSeverity,
         alertCooldownMinutes: Number(alertCooldownMinutes),
       });
@@ -228,59 +240,137 @@ export function SettingsModal({
           </Select>
         </Field>
 
-        <Field
-          label="Alert webhook"
-          htmlFor="alert-webhook"
-          hint="POSTs JSON when a problem appears or clears. Works with ntfy, Discord, Slack or anything that accepts a JSON body. Leave empty to disable."
-        >
-          <Input
-            id="alert-webhook"
-            type="url"
-            placeholder="https://ntfy.sh/my-topic"
-            value={alertWebhookUrl}
-            onChange={(e) => setAlertWebhookUrl(e.target.value)}
-          />
-        </Field>
+        <div className="rounded-lg border border-border bg-muted/30 p-3">
+          <p className="text-xs font-medium text-foreground">Alerts</p>
+          <p className="mt-0.5 text-2xs leading-snug text-muted-foreground">
+            Guardian messages you when a problem appears, gets worse, or clears. Fill in either
+            channel, both, or neither — each works on its own.
+          </p>
 
-        {/* Only meaningful once a target exists; showing them unconditionally
-            invites tuning a notifier that cannot notify. */}
-        {alertWebhookUrl.trim() !== '' && (
-          <>
+          <div className="mt-3 space-y-3 border-t border-border pt-3">
+            <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Telegram
+            </p>
             <Field
-              label="Alert on"
-              htmlFor="alert-min-severity"
-              hint="Critical-only is quieter but will not tell you a disk is filling until it is nearly full."
+              label="Bot token"
+              htmlFor="tg-token"
+              hint="Create a bot by messaging @BotFather on Telegram; it replies with a token like 123456789:AA…"
             >
-              <Select
-                id="alert-min-severity"
-                value={alertMinSeverity}
-                onChange={(e) => setAlertMinSeverity(e.target.value as 'warn' | 'crit')}
-                className="h-9 w-full"
-              >
-                <option value="warn">Warnings and critical (recommended)</option>
-                <option value="crit">Critical only</option>
-              </Select>
+              <Input
+                id="tg-token"
+                type="password"
+                autoComplete="off"
+                placeholder="123456789:AAExampleTokenFromBotFather"
+                value={tgToken}
+                onChange={(e) => setTgToken(e.target.value)}
+                className="font-mono"
+              />
             </Field>
+            <Field
+              label="Chat ID"
+              htmlFor="tg-chat"
+              hint="Your own numeric ID (message @userinfobot to get it), or a group ID, which starts with a minus sign. Send your bot a message first — it cannot open a conversation with you."
+            >
+              <Input
+                id="tg-chat"
+                placeholder="123456789"
+                value={tgChatId}
+                onChange={(e) => setTgChatId(e.target.value)}
+                className="font-mono"
+              />
+            </Field>
+          </div>
 
+          <div className="mt-3 space-y-3 border-t border-border pt-3">
+            <p className="text-2xs font-semibold uppercase tracking-wide text-muted-foreground">
+              WhatsApp <span className="font-normal normal-case">(via CallMeBot)</span>
+            </p>
             <Field
-              label="Repeat reminder after"
-              htmlFor="alert-cooldown"
-              hint="How long an unresolved problem stays quiet before it is mentioned again. Escalations always notify immediately."
+              label="Phone number"
+              htmlFor="wa-phone"
+              hint="Include the country code. Spaces and dashes are fine."
             >
-              <Select
-                id="alert-cooldown"
-                value={alertCooldownMinutes}
-                onChange={(e) => setAlertCooldownMinutes(Number(e.target.value))}
-                className="h-9 w-full"
-              >
-                <option value={15}>15 minutes</option>
-                <option value={60}>1 hour (recommended)</option>
-                <option value={240}>4 hours</option>
-                <option value={1440}>24 hours</option>
-              </Select>
+              <Input
+                id="wa-phone"
+                type="tel"
+                placeholder="+44 7700 900123"
+                value={waPhone}
+                onChange={(e) => setWaPhone(e.target.value)}
+                className="font-mono"
+              />
             </Field>
-          </>
-        )}
+            <Field
+              label="CallMeBot API key"
+              htmlFor="wa-key"
+              hint="Message “I allow callmebot to send me messages” on WhatsApp to +34 644 95 42 75 and it replies with your key."
+            >
+              <Input
+                id="wa-key"
+                type="password"
+                autoComplete="off"
+                placeholder="123456"
+                value={waApiKey}
+                onChange={(e) => setWaApiKey(e.target.value)}
+                className="font-mono"
+              />
+            </Field>
+            {/* CallMeBot is a free third-party service and rotates its bot
+                number when one gets blocked, so the number above can go stale.
+                Point at the source of truth rather than pretending otherwise. */}
+            <p className="text-2xs leading-snug text-muted-foreground">
+              No reply within two minutes? CallMeBot rotates its bot number when one is blocked —
+              check the current number at{' '}
+              <a
+                href="https://www.callmebot.com/blog/free-api-whatsapp-messages/"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-brand underline underline-offset-2"
+              >
+                callmebot.com
+              </a>
+              . Free for personal use only.
+            </p>
+          </div>
+
+          {/* Tuning only matters once something can actually be notified. */}
+          {(tgToken.trim() !== '' || waApiKey.trim() !== '') && (
+            <div className="mt-3 space-y-3 border-t border-border pt-3">
+              <Field
+                label="Alert on"
+                htmlFor="alert-min-severity"
+                hint="Critical-only is quieter but will not tell you a disk is filling until it is nearly full."
+              >
+                <Select
+                  id="alert-min-severity"
+                  value={alertMinSeverity}
+                  onChange={(e) => setAlertMinSeverity(e.target.value as 'warn' | 'crit')}
+                  className="h-9 w-full"
+                >
+                  <option value="warn">Warnings and critical (recommended)</option>
+                  <option value="crit">Critical only</option>
+                </Select>
+              </Field>
+
+              <Field
+                label="Repeat reminder after"
+                htmlFor="alert-cooldown"
+                hint="How long an unresolved problem stays quiet before it is mentioned again. Escalations always notify immediately."
+              >
+                <Select
+                  id="alert-cooldown"
+                  value={alertCooldownMinutes}
+                  onChange={(e) => setAlertCooldownMinutes(Number(e.target.value))}
+                  className="h-9 w-full"
+                >
+                  <option value={15}>15 minutes</option>
+                  <option value={60}>1 hour (recommended)</option>
+                  <option value={240}>4 hours</option>
+                  <option value={1440}>24 hours</option>
+                </Select>
+              </Field>
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-3">
           <div className="min-w-0">

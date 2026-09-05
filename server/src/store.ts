@@ -323,12 +323,16 @@ export function sanitizeSettings(body: unknown): Partial<DashboardSettings> | nu
       ? Math.min(300, Math.max(2, Math.round(interval)))
       : undefined,
     /*
-     * Alerting. The URL is stored verbatim and validated as http(s) at send
-     * time rather than here -- a webhook target is often a long opaque token,
-     * and normalising it to satisfy a stricter parser would silently break
-     * delivery in a way that only shows up when an alert fails to arrive.
+     * Alert credentials are stored close to verbatim -- only trimmed and length
+     * capped. These are opaque tokens, and normalising one to satisfy a stricter
+     * parser would break delivery in a way that shows up only when an alert
+     * fails to arrive. The phone number is the sole exception, cleaned at send
+     * time because operators reasonably type it with spaces.
      */
-    alertWebhookUrl: cleanString(b.alertWebhookUrl, 500),
+    alertTelegramBotToken: cleanString(b.alertTelegramBotToken, 200),
+    alertTelegramChatId: cleanString(b.alertTelegramChatId, 64),
+    alertWhatsappPhone: cleanString(b.alertWhatsappPhone, 32),
+    alertWhatsappApiKey: cleanString(b.alertWhatsappApiKey, 64),
     alertMinSeverity:
       b.alertMinSeverity === 'crit' || b.alertMinSeverity === 'warn'
         ? (b.alertMinSeverity as 'crit' | 'warn')
