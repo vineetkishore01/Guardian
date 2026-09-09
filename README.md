@@ -4,10 +4,15 @@
 
 Guardian reads your machine directly: `/proc` and `/sys` for host metrics, the Docker socket for containers. No agent, no database, no cloud. It runs in about 40 MB of RAM and pushes updates over Server-Sent Events rather than polling.
 
+<p align="center">
+  <img src="docs/screenshots/01-dashboard-overview.png" alt="Guardian Dashboard Overview" width="100%" />
+</p>
+
 ---
 
 ## Contents
 
+- [Showcase](#showcase)
 - [What it does](#what-it-does)
 - [How it works](#how-it-works)
 - [Quick start](#quick-start)
@@ -18,6 +23,27 @@ Guardian reads your machine directly: `/proc` and `/sys` for host metrics, the D
 - [Local development](#local-development)
 - [Design notes](#design-notes)
 - [Project layout](#project-layout)
+
+---
+
+## Showcase
+
+| Dashboard & Host Telemetry | App Launcher & In-Tile Widgets |
+|:---:|:---:|
+| [![Dashboard Overview](docs/screenshots/01-dashboard-overview.png)](docs/screenshots/01-dashboard-overview.png) | [![App Launcher](docs/screenshots/02-app-launcher.png)](docs/screenshots/02-app-launcher.png) |
+| *Real-time telemetry, Intel GPU stats, power, and storage gauges* | *App launcher with live in-tile widgets (Jellyfin, Bazarr, etc.)* |
+
+| Historical Metrics & Interactive Analytics | Host & Container Process Monitor |
+|:---:|:---:|
+| [![Historical Metrics](docs/screenshots/03-metric-telemetry.png)](docs/screenshots/03-metric-telemetry.png) | [![Process Monitor](docs/screenshots/04-process-monitor.png)](docs/screenshots/04-process-monitor.png) |
+| *Interactive 24-hour charts, min/avg/peak stats, and process consumers* | *Live process explorer sorting CPU, memory, and network usage* |
+
+<p align="center">
+  <b>Endpoint Health Prober</b><br/>
+  <a href="docs/screenshots/05-endpoint-health.png"><img src="docs/screenshots/05-endpoint-health.png" alt="Endpoint Health Prober" width="100%" /></a>
+  <br/>
+  <em>Automated HTTP health checks across container ports with latency and status codes</em>
+</p>
 
 ---
 
