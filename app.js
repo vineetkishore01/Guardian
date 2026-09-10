@@ -1,13 +1,12 @@
 // ==============================================================================
-// 🛡️ Guardian Website Interactive Logic & Micro-Animations
-// Tabs · Clipboard Copy · Screenshot Switcher · Simulated Live Telemetry
+// Guardian Website Interactive Logic
+// Tabs · Clipboard Copy · Screenshot Switcher
 // ==============================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
   initInstallTabs();
   initCopyButtons();
   initShowcaseGallery();
-  initLiveTelemetrySimulator();
   initNavbarScrollEffect();
   recordVisitorHit();
 });
@@ -74,7 +73,7 @@ function initCopyButtons() {
         await navigator.clipboard.writeText(textToCopy.trim());
         const originalText = btn.innerHTML;
         btn.innerHTML = `<span>✓ Copied!</span>`;
-        btn.style.background = 'var(--gradient-emerald)';
+        btn.style.background = 'var(--green)';
         btn.style.color = '#ffffff';
 
         showToast(btn.getAttribute('data-copy-message') || 'Copied to clipboard!');
@@ -143,38 +142,6 @@ function initShowcaseGallery() {
 }
 
 /* --------------------------------------------------------------------------
-   Live Telemetry Simulator (Real-time Feel)
-   -------------------------------------------------------------------------- */
-function initLiveTelemetrySimulator() {
-  const cpuElem = document.getElementById('telemetry-cpu');
-  const ramElem = document.getElementById('telemetry-ram');
-  const netElem = document.getElementById('telemetry-net');
-  const tempElem = document.getElementById('telemetry-temp');
-
-  if (!cpuElem && !ramElem) return;
-
-  setInterval(() => {
-    // Subtle realistic fluctuations
-    if (cpuElem) {
-      const cpu = (3.2 + Math.random() * 2.1).toFixed(1);
-      cpuElem.textContent = `${cpu}%`;
-    }
-    if (ramElem) {
-      const ram = (38.1 + Math.random() * 2.8).toFixed(1);
-      ramElem.textContent = `${ram} MB`;
-    }
-    if (netElem) {
-      const rx = (12.4 + Math.random() * 6.2).toFixed(1);
-      netElem.textContent = `↓ ${rx} MB/s`;
-    }
-    if (tempElem) {
-      const temp = (41.0 + Math.random() * 1.5).toFixed(1);
-      tempElem.textContent = `${temp}°C`;
-    }
-  }, 2200);
-}
-
-/* --------------------------------------------------------------------------
    Navbar Elevation on Scroll
    -------------------------------------------------------------------------- */
 function initNavbarScrollEffect() {
@@ -183,10 +150,10 @@ function initNavbarScrollEffect() {
 
   window.addEventListener('scroll', () => {
     if (window.scrollY > 40) {
-      navbar.style.background = 'rgba(3, 4, 7, 0.92)';
+      navbar.style.background = 'rgba(0, 0, 0, 0.92)';
       navbar.style.boxShadow = '0 10px 30px rgba(0, 0, 0, 0.7)';
     } else {
-      navbar.style.background = 'rgba(3, 4, 7, 0.75)';
+      navbar.style.background = 'rgba(0, 0, 0, 0.7)';
       navbar.style.boxShadow = 'none';
     }
   });
