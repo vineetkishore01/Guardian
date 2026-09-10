@@ -13,11 +13,80 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function recordVisitorHit() {
   try {
-    fetch('https://guardian-counterstill-sun-e8de.vineetkishore01.workers.dev/hit', {
-      mode: 'cors',
-      cache: 'no-cache'
-    }).catch(() => {});
-  } catch (e) {}
+    // 1. Automation & WebDriver Detection (Puppeteer, Playwright, Selenium, Headless Chrome)
+    if (navigator.webdriver) return;
+    if (window.__nightmare || window._phantom || window.callPhantom || window.__selenium_unwrapped) return;
+
+    // 2. Headless Environment Anomalies
+    if (!window.screen || window.screen.width === 0 || window.screen.height === 0) return;
+    if (!navigator.languages || navigator.languages.length === 0) return;
+
+    // 3. User-Agent Crawler & Bot Filtering
+    const ua = (navigator.userAgent || '').toLowerCase();
+    const botPattern = /bot|crawler|spider|crawling|slurp|duckduck|baiduspider|yandex|sogou|exabot|facebot|facebookexternalhit|ia_archiver|semrush|ahrefs|mj12|dotbot|petalbot|bytespider|screaming|censys|shodan|netcraft|preview|headless|curl|wget|python|axios|httpie|postman|whatsapp|telegram|twitter|slack|discord|applebot|linkedin/i;
+    if (botPattern.test(ua)) return;
+
+    // 4. Session Deduplication: Record at most 1 visit per browser session (prevents reload inflation)
+    const sessionKey = 'guardian_visited_session';
+    if (sessionStorage.getItem(sessionKey)) return;
+
+    // 5. Persistent Device Identifier: Ensures 1 device = 1 unique visitor even across Wi-Fi & cellular
+    let visitorId = localStorage.getItem('guardian_visitor_id');
+    if (!visitorId) {
+      visitorId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : ('g_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+      localStorage.setItem('guardian_visitor_id', visitorId);
+    }
+
+    // 6. Human Interaction & Active Dwell Verification
+    // Automated crawlers parse the DOM and exit in milliseconds without human events.
+    // We send the ping ONLY after a real user interaction or 3.5s of visible dwell time.
+    let dispatched = false;
+    function sendVerifiedHit() {
+      if (dispatched) return;
+      if (document.visibilityState !== 'visible') return;
+      dispatched = true;
+      sessionStorage.setItem(sessionKey, 'true');
+
+      // Detach interaction listeners
+      ['scroll', 'mousemove', 'click', 'touchstart', 'keydown'].forEach((evt) => {
+        window.removeEventListener(evt, onUserAction);
+      });
+
+      const targetUrl = 'https://guardian-counterstill-sun-e8de.vineetkishore01.workers.dev/hit?vid=' + encodeURIComponent(visitorId);
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(targetUrl);
+      } else {
+        fetch(targetUrl, { mode: 'cors', cache: 'no-cache', keepalive: true }).catch(() => {});
+      }
+    }
+
+    let actionTimer = null;
+    function onUserAction() {
+      if (dispatched) return;
+      // Slight debounce so synthesized bot events don't trigger instantly
+      clearTimeout(actionTimer);
+      actionTimer = setTimeout(sendVerifiedHit, 300);
+    }
+
+    // Listen for genuine human interaction
+    window.addEventListener('scroll', onUserAction, { passive: true, once: true });
+    window.addEventListener('mousemove', onUserAction, { passive: true, once: true });
+    window.addEventListener('click', onUserAction, { passive: true, once: true });
+    window.addEventListener('touchstart', onUserAction, { passive: true, once: true });
+    window.addEventListener('keydown', onUserAction, { passive: true, once: true });
+
+    // Fallback: 3.5 seconds of active visible reading
+    setTimeout(() => {
+      if (!dispatched && document.visibilityState === 'visible') {
+        sendVerifiedHit();
+      }
+    }, 3500);
+
+  } catch (e) {
+    // Fail silently so site functionality is never impaired
+  }
 }
 
 /* --------------------------------------------------------------------------
