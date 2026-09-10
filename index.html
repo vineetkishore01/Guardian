@@ -6,15 +6,20 @@
   <title>Guardian — Ultra-Lightweight Self-Hosted Homelab Dashboard</title>
   <meta name="description" content="A self-hosted dashboard for Docker homelabs: real-time host telemetry, container auto-discovery, HTTP health probing, and an app launcher in one page. Zero database, under 40MB RAM." />
 
-  <!-- Open Graph / Social Media Meta Tags -->
+  <!-- Canonical & Social Media Meta Tags -->
+  <link rel="canonical" href="https://vineetkishore01.github.io/Guardian/" />
   <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://vineetkishore01.github.io/Guardian/" />
   <meta property="og:title" content="Guardian — Ultra-Lightweight Self-Hosted Homelab Dashboard" />
-  <meta property="og:description" content="Server telemetry, container health, and an app launcher in one page. Directly reads /proc & /sys, zero DB, under 40MB RAM." />
-  <meta property="og:image" content="./screenshots/01-dashboard-overview.png" />
+  <meta property="og:description" content="Host telemetry directly from /proc & /sys, Docker container auto-discovery, HTTP endpoint health checks, and an app launcher in one page. Zero database, under 40MB RAM." />
+  <meta property="og:image" content="https://vineetkishore01.github.io/Guardian/screenshots/01-dashboard-overview.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Guardian — Self-Hosted Homelab Dashboard" />
-  <meta name="twitter:description" content="Server telemetry, container health, and an app launcher in one page. Directly reads /proc & /sys, zero DB, under 40MB RAM." />
-  <meta name="twitter:image" content="./screenshots/01-dashboard-overview.png" />
+  <meta name="twitter:url" content="https://vineetkishore01.github.io/Guardian/" />
+  <meta name="twitter:title" content="Guardian — Ultra-Lightweight Self-Hosted Homelab Dashboard" />
+  <meta name="twitter:description" content="Host telemetry directly from /proc & /sys, Docker container auto-discovery, HTTP endpoint health checks, and an app launcher in one page. Zero database, under 40MB RAM." />
+  <meta name="twitter:image" content="https://vineetkishore01.github.io/Guardian/screenshots/01-dashboard-overview.png" />
 
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%233b82f6%22><rect width=%2224%22 height=%2224%22 rx=%225%22/><path fill=%22white%22 d=%22M12 5.5 17 7.6v3.9c0 3.6-2.1 6.1-5 7.4-2.9-1.3-5-3.8-5-7.4V7.6L12 5.5Z%22/></svg>" />
   <link rel="stylesheet" href="styles.css" />
@@ -530,9 +535,56 @@
         <a href="https://github.com/vineetkishore01/Guardian" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
         <a href="https://github.com/vineetkishore01/Guardian/pkgs/container/guardian" target="_blank" rel="noopener noreferrer">GHCR Package</a>
         <a href="#quickstart">Quick Install</a>
+        <a href="#privacy" id="privacy-link">Privacy &amp; Cookies</a>
       </div>
     </div>
   </footer>
+
+  <!-- Privacy, Cookies & Security Policy Modal -->
+  <div class="modal-backdrop" id="privacy-modal" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="brand-mark">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          </span>
+          <h3>Privacy, Cookies &amp; Security Policy</h3>
+        </div>
+        <button class="modal-close" id="privacy-close" aria-label="Close Privacy Modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="privacy-badge-row">
+          <span class="privacy-pill">✓ 100% Cookie-Free</span>
+          <span class="privacy-pill">✓ Zero App Telemetry</span>
+          <span class="privacy-pill">✓ Read-Only Docker Socket</span>
+          <span class="privacy-pill">✓ MIT Open Source</span>
+        </div>
+
+        <div class="privacy-section">
+          <h4>1. Zero Tracking Cookies</h4>
+          <p>Neither this showcase website nor the self-hosted Guardian application store any tracking cookies, advertising identifiers, or third-party marketing beacons in your browser.</p>
+        </div>
+
+        <div class="privacy-section">
+          <h4>2. Guardian Self-Hosted Application Telemetry</h4>
+          <p>The Guardian Docker container runs 100% on your local hardware or VPS. It makes <strong>zero outbound connections</strong> to external telemetry, analytics, or licensing servers. All server metrics, container logs, and process states stay entirely within your private network.</p>
+        </div>
+
+        <div class="privacy-section">
+          <h4>3. Showcase Website Visit Counter</h4>
+          <p>This showcase website uses a privacy-preserving, cookie-less counter powered by a serverless Cloudflare Worker to measure open-source project interest. It incorporates bot detection and local session deduplication. It does not store IP addresses or personal identifiable information (PII).</p>
+        </div>
+
+        <div class="privacy-section">
+          <h4>4. Docker Socket Security Best Practices</h4>
+          <p>Guardian connects to the local Docker engine via <code>/var/run/docker.sock</code> mounted with read-only permissions (<code>:ro</code>) by default. It queries standard Docker REST endpoints strictly to detect running containers and port mappings.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-primary" id="privacy-ok-btn" style="padding: 10px 22px; font-size: 0.85rem;">Understood</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Lightbox Preview Modal -->
   <div class="lightbox" id="lightbox">

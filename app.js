@@ -8,6 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initCopyButtons();
   initShowcaseGallery();
   initNavbarScrollEffect();
+  initPrivacyModal();
+  initGitHubStars();
   recordVisitorHit();
 });
 
@@ -226,4 +228,60 @@ function initNavbarScrollEffect() {
       navbar.style.boxShadow = 'none';
     }
   });
+}
+
+/* --------------------------------------------------------------------------
+   Privacy & Security Policy Modal
+   -------------------------------------------------------------------------- */
+function initPrivacyModal() {
+  const privacyLink = document.getElementById('privacy-link');
+  const privacyModal = document.getElementById('privacy-modal');
+  const privacyClose = document.getElementById('privacy-close');
+  const privacyOkBtn = document.getElementById('privacy-ok-btn');
+
+  if (!privacyModal) return;
+
+  function openModal(e) {
+    if (e) e.preventDefault();
+    privacyModal.classList.add('open');
+    privacyModal.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeModal() {
+    privacyModal.classList.remove('open');
+    privacyModal.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+  }
+
+  if (privacyLink) privacyLink.addEventListener('click', openModal);
+  if (privacyClose) privacyClose.addEventListener('click', closeModal);
+  if (privacyOkBtn) privacyOkBtn.addEventListener('click', closeModal);
+
+  privacyModal.addEventListener('click', (e) => {
+    if (e.target === privacyModal) closeModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && privacyModal.classList.contains('open')) {
+      closeModal();
+    }
+  });
+}
+
+/* --------------------------------------------------------------------------
+   Fetch Dynamic GitHub Repo Stars
+   -------------------------------------------------------------------------- */
+function initGitHubStars() {
+  const starBtn = document.querySelector('.btn-github span');
+  if (!starBtn) return;
+
+  fetch('https://api.github.com/repos/vineetkishore01/Guardian')
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (data && typeof data.stargazers_count === 'number' && data.stargazers_count > 0) {
+        starBtn.textContent = `Star on GitHub (${data.stargazers_count})`;
+      }
+    })
+    .catch(() => {});
 }
