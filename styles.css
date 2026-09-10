@@ -296,6 +296,35 @@ section[id], header[id] {
   font-weight: 400;
 }
 
+.hero-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 48px;
+}
+
+.hero-cta .btn-primary,
+.hero-cta .btn-github {
+  padding: 11px 22px;
+  font-size: 0.9rem;
+}
+
+/* --------------------------------------------------------------------------
+   Hero screenshot — the actual dashboard, shown immediately, above the fold
+   -------------------------------------------------------------------------- */
+.hero-showcase {
+  max-width: 1100px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hero-showcase-caption {
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
 /* --------------------------------------------------------------------------
    Spec strip — styled like the dashboard's own stat tiles, real fixed facts
    -------------------------------------------------------------------------- */
@@ -548,9 +577,9 @@ section[id], header[id] {
 }
 
 /* --------------------------------------------------------------------------
-   Screenshot Showcase
+   Quick Install
    -------------------------------------------------------------------------- */
-.showcase-section {
+.quickstart-section {
   padding: 88px 0;
   position: relative;
 }
