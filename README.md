@@ -124,6 +124,16 @@ Auto-discovers containers and turns them into clickable tiles. Custom icons (60+
 
 ### Docker Compose
 
+Grab `docker-compose.yml.example` directly or paste the compose configuration below:
+
+```bash
+# Download and start in one step
+curl -sSL https://raw.githubusercontent.com/vineetkishore01/Guardian/main/docker-compose.yml.example -o docker-compose.yml
+docker compose up -d
+```
+
+Or create `docker-compose.yml` manually:
+
 ```yaml
 services:
   guardian:
@@ -133,15 +143,15 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      # Container discovery, stats and logs
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Container discovery, stats and logs (/var/run/docker.sock for rw actions)
+      - /var/run/docker.sock:/var/run/docker.sock
       # Host telemetry
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /etc/os-release:/host/etc/os-release:ro
-      # Storage — mount whatever you want measured
-      - /:/host/root:ro
-      - /mnt/nas:/host/mnt/nas:ro
+      - /etc/hostname:/host/etc/hostname:ro
+      # Storage — mount root (rslave allows submounts like /mnt or /media to resolve)
+      - /:/host/root:ro,rslave
       # Persisted icons, bookmarks, history and logs
       - guardian_data:/data
     environment:
@@ -149,9 +159,8 @@ services:
       - HOST_SYS=/host/sys
       - HOST_ETC=/host/etc
       - HOST_ROOT=/host/root
-      - HOST_NAS=/host/mnt/nas
-      - SERVER_IP=192.168.1.10
-      - TAILSCALE_IP=100.100.100.100
+      - PORT=3001
+      - NODE_ENV=production
     deploy:
       resources:
         limits:
@@ -160,10 +169,6 @@ services:
 
 volumes:
   guardian_data:
-```
-
-```bash
-docker compose up -d
 ```
 
 Then open `http://<your-server>:3001`.
@@ -349,7 +354,8 @@ Chart series use a four-slot categorical palette assigned in fixed order and val
 ```
 Guardian/
 ├── Dockerfile                    Multi-stage production image
-├── docker-compose.yml            Sample deployment
+├── docker-compose.yml            Local development deployment
+├── docker-compose.yml.example    Standalone production template (GHCR image)
 ├── server/                       Node · TypeScript · Express
 │   └── src/
 │       ├── collectors/

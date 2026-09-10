@@ -1,0 +1,93 @@
+# ==============================================================================
+# 🛡️ Guardian — Production Docker Compose Configuration
+# ==============================================================================
+# Quick Start:
+#   1. Copy this file: cp docker-compose.yml.example docker-compose.yml
+#   2. Adjust optional environment variables below (LAN/Tailscale IPs, NAS paths)
+#   3. Run: docker compose up -d
+#   4. Access the dashboard at http://<your-server-ip>:3001
+# ==============================================================================
+
+services:
+  guardian:
+    image: ghcr.io/vineetkishore01/guardian:latest
+    container_name: guardian
+    restart: unless-stopped
+
+    ports:
+      - "3001:3001"
+
+    # Optional: Use host networking mode instead of bridge mode to measure real
+    # host network interface throughput (recommended if you have 10GbE or bonded NICs)
+    # network_mode: host
+
+    volumes:
+      # --- Docker Engine Socket ---
+      # Required for container discovery, live stats streams, logs, restart, and image prune.
+      # Default: read-write (/var/run/docker.sock:/var/run/docker.sock)
+      # For read-only telemetry only (no restart/prune/power actions), append ':ro'.
+      # For Rootless Docker: replace with ${XDG_RUNTIME_DIR}/docker.sock:/var/run/docker.sock
+      # For Podman: replace with /run/podman/podman.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # --- Host Telemetry (procfs and sysfs) ---
+      # Gives Guardian real CPU, core breakdown, RAM, pressure (PSI), thermals, and fan telemetry
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+
+      # --- Host Identification ---
+      # Exposes true distribution name (Ubuntu, Debian, Fedora, Arch, Alpine, etc.) and hostname
+      - /etc/os-release:/host/etc/os-release:ro
+      - /etc/hostname:/host/etc/hostname:ro
+
+      # --- Storage Monitoring ---
+      # Mount host root to measure root filesystem usage.
+      # Note: 'rslave' propagation allows submounts (like /mnt or /media on separate disks)
+      # to be discovered automatically by Guardian.
+      - /:/host/root:ro,rslave
+
+      # --- Optional Secondary Disks / NAS / Storage Pools ---
+      # Uncomment and adjust if you have external storage or network shares mounted on your host:
+      # - /mnt/nas:/host/mnt/nas:ro
+      # - /mnt/storage:/host/mnt/storage:ro
+
+      # --- Persistent Data ---
+      # Stores custom app icons, bookmarks, dashboard settings, 30-day historical metrics, and logs
+      - guardian_data:/data
+
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+
+      # Host telemetry mount paths (must match the volume mounts above)
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
+      - HOST_ETC=/host/etc
+      - HOST_ROOT=/host/root
+
+      # Optional: secondary storage paths (must match any extra mounts above)
+      # - HOST_NAS=/host/mnt/nas
+      # - HOST_MOUNTS=/host/mnt/storage,/host/mnt/backup
+
+      # Optional: Seed the LAN and Tailscale launch IP targets for App tiles.
+      # (Both can also be configured or changed anytime directly in Dashboard -> Settings)
+      # - SERVER_IP=192.168.1.100
+      # - TAILSCALE_IP=100.x.y.z
+
+      # Optional: Host Power Controls (Shutdown / Reboot from Dashboard header)
+      # Set to 'true' to enable the guarded Power button in the dashboard.
+      # Triggering requires typing the exact host hostname to confirm.
+      # - ENABLE_POWER_CONTROLS=false
+
+      # Optional: Custom Power Command (if not using default Docker helper container)
+      # - GUARDIAN_POWER_COMMAND=/usr/bin/ssh admin@host sudo systemctl {action}
+
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.50'
+
+volumes:
+  guardian_data:
+    name: guardian_data
