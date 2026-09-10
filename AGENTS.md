@@ -110,7 +110,7 @@ To monitor traffic and virality on the public showcase website without heavy thi
      - Unique Visitors
      - Today's Visits
      - Active Bot Shields badge
-     - One-click stats reset trigger (`/reset?key=guardian2026`)
+     - One-click stats reset trigger (`/reset?key=<see Cloudflare Worker env, not committed>`)
 
 ---
 
