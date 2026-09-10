@@ -14,5 +14,9 @@
   "search.exclude": {
     "**/node_modules": true,
     "**/dist": true
-  }
+  },
+  "git.countBadge": "tracked",
+  "git.autorefresh": true,
+  "git.untrackedChanges": "separate",
+  "git.statusLimit": 50000
 }
