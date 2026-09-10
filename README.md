@@ -2,6 +2,8 @@
 
 **A self-hosted dashboard for a Docker homelab — server telemetry, container health, and an app launcher in one page.**
 
+[🌐 **Live Website & Quick Install Guide**](https://vineetkishore01.github.io/Guardian/) · [📦 **GHCR Container Package**](https://github.com/vineetkishore01/Guardian/pkgs/container/guardian)
+
 Guardian reads your machine directly: `/proc` and `/sys` for host metrics, the Docker socket for containers. No agent, no database, no cloud. It runs in about 40 MB of RAM and pushes updates over Server-Sent Events rather than polling.
 
 <p align="center">
