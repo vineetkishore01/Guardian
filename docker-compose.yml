@@ -33,8 +33,8 @@ services:
       # Optional: extra mount points to watch, comma separated
       # - HOST_MOUNTS=/host/mnt/backup
       # Seed the LAN / Tailscale launch targets; both editable in Settings
-      - SERVER_IP=192.168.0.26
-      - TAILSCALE_IP=100.94.238.9
+      - SERVER_IP=192.168.1.100
+      - TAILSCALE_IP=100.x.y.z
       - PORT=3001
       - NODE_ENV=production
       # Shutdown / reboot from the dashboard. Set to true to enable Power controls in the header.
