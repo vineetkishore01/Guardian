@@ -89,6 +89,12 @@ code, .mono {
   z-index: 2;
 }
 
+/* Reserve space above in-page anchor targets so the fixed navbar never
+   covers the section heading it jumped to. */
+section[id], header[id] {
+  scroll-margin-top: 84px;
+}
+
 .icon {
   width: 1em;
   height: 1em;
@@ -348,6 +354,7 @@ code, .mono {
   padding: 10px 12px;
   background: var(--bg-raised-2);
   border-bottom: 1px solid var(--border);
+  min-width: 0;
 }
 
 .install-tabs {
@@ -357,6 +364,14 @@ code, .mono {
   padding: 3px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.install-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab-btn {
@@ -369,6 +384,8 @@ code, .mono {
   padding: 6px 14px;
   border-radius: var(--radius-full);
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
@@ -1031,5 +1048,32 @@ code, .mono {
 
   .gallery-tab {
     justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar-inner {
+    gap: 8px;
+  }
+
+  .brand-badge {
+    display: none;
+  }
+
+  .btn-github span {
+    display: none;
+  }
+
+  .btn-github {
+    padding: 8px 10px;
+  }
+
+  .nav-actions {
+    gap: 8px;
+  }
+
+  .btn-primary {
+    padding: 8px 14px;
+    font-size: 0.8rem;
   }
 }
