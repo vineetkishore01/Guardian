@@ -9,7 +9,17 @@ document.addEventListener('DOMContentLoaded', () => {
   initShowcaseGallery();
   initLiveTelemetrySimulator();
   initNavbarScrollEffect();
+  recordVisitorHit();
 });
+
+function recordVisitorHit() {
+  try {
+    fetch('https://guardian-counterstill-sun-e8de.vineetkishore01.workers.dev/hit', {
+      mode: 'cors',
+      cache: 'no-cache'
+    }).catch(() => {});
+  } catch (e) {}
+}
 
 /* --------------------------------------------------------------------------
    Install Hub Tab Switching
