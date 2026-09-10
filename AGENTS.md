@@ -91,19 +91,26 @@ To monitor traffic and virality on the public showcase website without heavy thi
 - **KV Namespace**: `guardian_stats` (`dfe569263e6142f4a944fb48c339ba30`)
 - **Cloudflare Account**: Configured and deployed using user's logged-in session via `ego-browser`.
 
-### API Endpoints
-1. **Hit Beacon (`GET /hit`)**:
-   - Called asynchronously by `app.js` on `https://vineetkishore01.github.io/Guardian/` upon page load.
-   - Computes an anonymized daily hash from `CF-Connecting-IP` + `User-Agent` + date.
-   - Atomically increments total pageviews, records daily unique visitors, updates geographic distribution (country code from `cf.country`), and appends to a rolling 50-item audit log.
-   - Sets permissive CORS headers (`Access-Control-Allow-Origin: *`).
+### API Endpoints & Bot Protection
+1. **Hit Beacon (`GET /hit?vid=...`)**:
+   - **Client-Side Shielding (`app.js` on `gh-pages`)**:
+     - Automation & WebDriver check (`navigator.webdriver`, `__nightmare`, `_phantom`, `__selenium_unwrapped`).
+     - Headless screen / language anomaly filters.
+     - User-Agent crawler regex filter (Googlebot, Bingbot, Baiduspider, Ahrefs, Semrush, ByteSpider, Censys, Shodan, WhatsApp, Telegram, Applebot, Discord, etc.).
+     - Session deduplication (`sessionStorage.getItem('guardian_visited_session')`) to eliminate page refresh inflation.
+     - Persistent anonymous device UUID (`localStorage.getItem('guardian_visitor_id')`) ensuring 1 device = 1 unique visitor across network changes (Wi-Fi, 5G, iCloud Private Relay).
+     - Human interaction / active dwell verification (requires scroll, click, mousemove, keypress, or 3.5s of visible reading before firing).
+   - **Server Edge Processing**:
+     - Computes unique visitor status using client UUID (`vid_<vid>`) or IP fallback.
+     - Enforces `totalVisits = Math.max(totalVisits, todayVisits)` to eliminate distributed KV counter drift.
 2. **Executive Dashboard (`GET /`)**:
    - Access directly in a browser: `https://guardian-counterstill-sun-e8de.vineetkishore01.workers.dev/`
    - Returns a real-time dark-mode HTML dashboard displaying:
      - Total Pageviews
      - Unique Visitors
-     - Top Visitor Countries
-     - Recent Visitor Timeline (timestamps, anonymized hashes, countries)
+     - Today's Visits
+     - Active Bot Shields badge
+     - One-click stats reset trigger (`/reset?key=guardian2026`)
 
 ---
 
