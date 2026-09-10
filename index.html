@@ -74,7 +74,7 @@
       <div class="spec-strip">
         <div class="spec-tile">
           <span class="spec-label">Memory (idle)</span>
-          <span class="spec-value">~38 MB</span>
+          <span class="spec-value">~40 MB</span>
         </div>
         <div class="spec-tile">
           <span class="spec-label">Database</span>
@@ -139,24 +139,30 @@
     <span class="hl-key">ports</span>:
       - <span class="hl-str">"3001:3001"</span>
     <span class="hl-key">volumes</span>:
-      <span class="hl-cmt"># Docker socket (container stats, logs, restart, health)</span>
+      <span class="hl-cmt"># Docker socket — container discovery, live stats, logs, restart, prune</span>
       - <span class="hl-val">/var/run/docker.sock:/var/run/docker.sock</span>
-      <span class="hl-cmt"># Host telemetry (procfs &amp; sysfs)</span>
+      <span class="hl-cmt"># Host telemetry (procfs &amp; sysfs) — CPU, RAM, PSI pressure, thermals, fans</span>
       - <span class="hl-val">/proc:/host/proc:ro</span>
       - <span class="hl-val">/sys:/host/sys:ro</span>
+      <span class="hl-cmt"># Host identification — real distro name &amp; hostname</span>
       - <span class="hl-val">/etc/os-release:/host/etc/os-release:ro</span>
       - <span class="hl-val">/etc/hostname:/host/etc/hostname:ro</span>
       <span class="hl-cmt"># Host storage (rslave discovers submounts like /mnt, /media)</span>
       - <span class="hl-val">/:/host/root:ro,rslave</span>
-      <span class="hl-cmt"># Persisted icons, bookmarks, 30-day history, logs</span>
+      <span class="hl-cmt"># Persisted icons, bookmarks, settings, 30-day history, logs</span>
       - <span class="hl-val">guardian_data:/data</span>
     <span class="hl-key">environment</span>:
+      - <span class="hl-val">NODE_ENV=production</span>
+      - <span class="hl-val">PORT=3001</span>
       - <span class="hl-val">HOST_PROC=/host/proc</span>
       - <span class="hl-val">HOST_SYS=/host/sys</span>
       - <span class="hl-val">HOST_ETC=/host/etc</span>
       - <span class="hl-val">HOST_ROOT=/host/root</span>
-      - <span class="hl-val">PORT=3001</span>
-      - <span class="hl-val">NODE_ENV=production</span>
+      <span class="hl-cmt"># Optional: seed LAN / Tailscale launch IPs for app tiles</span>
+      <span class="hl-cmt"># - SERVER_IP=192.168.1.100</span>
+      <span class="hl-cmt"># - TAILSCALE_IP=100.x.y.z</span>
+      <span class="hl-cmt"># Optional: enable guarded shutdown/reboot (off by default)</span>
+      <span class="hl-cmt"># - ENABLE_POWER_CONTROLS=false</span>
     <span class="hl-key">deploy</span>:
       <span class="hl-key">resources</span>:
         <span class="hl-key">limits</span>:
@@ -319,10 +325,10 @@
           </div>
           <h3 class="feature-title">Auto-discovered app tiles</h3>
           <p class="feature-desc">
-            Inspects the Docker daemon socket to detect running containers automatically. Ships with icons and categories for 60+ popular self-hosted apps, including Jellyfin, Sonarr, Radarr, and Home Assistant.
+            Inspects the Docker daemon socket to detect running containers automatically. Ships with icons and categories for 45+ popular self-hosted apps, including Jellyfin, Sonarr, Radarr, and Home Assistant.
           </p>
           <div class="feature-badges">
-            <span class="feat-badge">60+ presets</span>
+            <span class="feat-badge">45+ presets</span>
             <span class="feat-badge">In-tile widgets</span>
             <span class="feat-badge">LAN / Tailscale</span>
           </div>
@@ -388,16 +394,9 @@
             </thead>
             <tbody>
               <tr>
-                <td><strong>Memory footprint (idle)</strong></td>
-                <td class="highlight">~38 MB</td>
-                <td>~120 MB</td>
-                <td>~250 MB+</td>
-                <td>~80 MB (Dashy)</td>
-              </tr>
-              <tr>
                 <td><strong>External database needed</strong></td>
                 <td class="highlight">None</td>
-                <td>Embedded SQLite</td>
+                <td>Embedded local DB</td>
                 <td>Custom DB engine</td>
                 <td>None (YAML only)</td>
               </tr>
@@ -430,11 +429,11 @@
                 <td><span class="check">✓</span> Yes</td>
               </tr>
               <tr>
-                <td><strong>Setup time</strong></td>
-                <td class="highlight">~5 seconds (1 command)</td>
-                <td>~2 minutes</td>
-                <td>~3 minutes</td>
-                <td>15+ minutes (config editing)</td>
+                <td><strong>Single-command install</strong></td>
+                <td class="highlight"><span class="check">✓</span> One curl + compose up</td>
+                <td><span class="check">✓</span> Yes</td>
+                <td><span class="check">✓</span> Yes</td>
+                <td><span class="cross">✗</span> Manual YAML config first</td>
               </tr>
             </tbody>
           </table>
