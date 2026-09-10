@@ -9,3 +9,8 @@ data/*.json
 
 # Runtime config written when the server runs outside a container
 server/data/
+
+# Website code lives on gh-pages branch only
+docs/*.html
+docs/*.css
+docs/*.js
