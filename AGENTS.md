@@ -205,3 +205,10 @@ volumes:
    Ensure `server/package.json` contains `@types/node` and that `./server/node_modules/.bin/tsc --noEmit` exits with 0 before completing any backend modifications.
 4. **Cloudflare Worker Updates**:
    The worker script source is maintained in the Cloudflare Dashboard under `guardian-counterstill-sun-e8de`. If modifications are needed, test changes using `ego-browser` or the Cloudflare API.
+5. **Host-Network and Namespace-Guest Port Discovery**:
+   Docker daemon's `/containers/json` returns `Ports: []` for any container using `network_mode: host` or `network_mode: container:<parent>`.
+   `fetchContainerDetail` extracts `raw.Config?.ExposedPorts`.
+   - For `network_mode: host`: `publicPort` is mapped directly to `privatePort` (`0.0.0.0`) since the container listens directly on host interfaces.
+   - For `network_mode: container:<parent>`: Guest exposed ports are matched against parent published ports.
+   - `buildProbeTargets` filters out non-HTTP ports (e.g. DNS 53, RTSP 8554, MQTT 1883, HAP 51826) and prioritizes explicit `customUrl` to avoid false down alerts.
+   - `resolveContainerUrl` in the frontend client uses intelligent fallback to well-known service ports so all containers get functional launch URLs.
