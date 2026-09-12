@@ -93,6 +93,56 @@ const DEFAULT_HOMELAB_ICONS: Record<string, { icon: string; category: string; di
     category: 'System',
     displayName: 'CasaOS Portal',
   },
+  go2rtc: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/webrtc.svg',
+    category: 'Media',
+    displayName: 'go2rtc WebRTC',
+  },
+  'qubo-dashboard': {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/home-assistant.svg',
+    category: 'Automation',
+    displayName: 'Qubo Smart Home',
+  },
+  qubo: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/home-assistant.svg',
+    category: 'Automation',
+    displayName: 'Qubo Smart Home',
+  },
+  'qubo-mosquitto': {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/mosquitto.svg',
+    category: 'Automation',
+    displayName: 'Mosquitto MQTT',
+  },
+  mosquitto: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/mosquitto.svg',
+    category: 'Automation',
+    displayName: 'Mosquitto MQTT',
+  },
+  adguardhome: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/adguard-home.svg',
+    category: 'System',
+    displayName: 'AdGuard Home',
+  },
+  adguard: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/adguard-home.svg',
+    category: 'System',
+    displayName: 'AdGuard Home',
+  },
+  streamystats: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/jellyfin.svg',
+    category: 'Media',
+    displayName: 'StreamyStats',
+  },
+  traefik: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/traefik.svg',
+    category: 'System',
+    displayName: 'Traefik Proxy',
+  },
+  cloudflared: {
+    icon: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/cloudflare.svg',
+    category: 'System',
+    displayName: 'Cloudflare Tunnel',
+  },
 };
 
 const DEFAULT_SETTINGS: DashboardSettings = {

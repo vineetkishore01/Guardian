@@ -41,11 +41,12 @@ const HEALTH_PATHS: Record<string, string> = {
   bazarr: '/api/system/status',
   jellyfin: '/health',
   emby: '/health',
+  go2rtc: '/api',
 };
 
 /*
  * Default listen ports for services that commonly run inside another
- * container's network namespace (`network_mode: container:gluetun`).
+ * container's network namespace (`network_mode: container:gluetun`) or in host mode.
  *
  * Such a container publishes nothing of its own -- the *parent* publishes on its
  * behalf -- so port-to-container attribution has to be inferred. Without this,
@@ -63,7 +64,35 @@ const DEFAULT_SERVICE_PORTS: Record<string, number> = {
   transmission: 9091,
   sabnzbd: 8080,
   deluge: 8112,
+  go2rtc: 1984,
+  'qubo-dashboard': 3002,
+  qubo: 3002,
+  adguardhome: 3080,
+  adguard: 3080,
+  streamystats: 3003,
+  jellyfin: 8096,
+  seerr: 5055,
+  overseerr: 5055,
 };
+
+/** Ports dedicated to non-HTTP protocols that fail or timeout when probed via HTTP GET. */
+const NON_HTTP_PORTS = new Set([
+  22,    // SSH
+  53,    // DNS
+  67,    // DHCP
+  68,    // DHCP
+  123,   // NTP
+  554,   // RTSP
+  853,   // DNS-over-TLS
+  1883,  // MQTT
+  5432,  // PostgreSQL
+  5443,  // DNSCrypt
+  8554,  // RTSP
+  8555,  // WebRTC raw
+  8883,  // MQTT TLS
+  51820, // WireGuard
+  51826, // Apple HomeKit HAP
+]);
 
 function defaultPortFor(name: string): number | null {
   const key = name.toLowerCase();
@@ -92,8 +121,8 @@ function portFromBookmarkUrl(raw: string): number | null {
 /**
  * Builds the probe list from live state.
  *
- * Containers contribute their published ports; bookmarks contribute anything
- * else the operator cares about, which covers host services that are not
+ * Containers contribute their published ports and custom URLs; bookmarks contribute
+ * anything else the operator cares about, which covers host services that are not
  * containers at all. Hidden containers are skipped — if it is not on the
  * dashboard, it should not be probed.
  */
@@ -114,15 +143,17 @@ export function buildProbeTargets(
     apiKey: c.integrationConfig?.apiKey,
   });
 
-  /*
-   * Namespace guests first, so they win the port they actually own.
-   *
-   * A container with `network_mode: container:X` has no ports of its own; X
-   * publishes them. Attributing the port to X is wrong twice over -- the guest
-   * is never checked, and the parent is checked against a service it does not
-   * run. Where the guest's well-known port is among the parent's published
-   * ports, the guest is the honest owner of that row.
-   */
+  // 1. Explicit custom URLs take precedence (e.g. AdGuard customUrl: http://192.168.0.26:3080)
+  for (const c of running) {
+    if (c.customUrl) {
+      const port = portFromBookmarkUrl(c.customUrl);
+      if (port && !NON_HTTP_PORTS.has(port) && !byPort.has(port)) {
+        byPort.set(port, targetFor(c, port, 'custom URL'));
+      }
+    }
+  }
+
+  // 2. Namespace guests first, so they win the port they actually own.
   for (const c of running) {
     if (!c.networkParent || (c.ports || []).length > 0) continue;
 
@@ -133,24 +164,36 @@ export function buildProbeTargets(
     if (!wanted) continue;
 
     const published = (parent.ports || []).find((p) => p.privatePort === wanted && p.publicPort);
-    if (!published?.publicPort || byPort.has(published.publicPort)) continue;
+    if (!published?.publicPort || NON_HTTP_PORTS.has(published.publicPort) || byPort.has(published.publicPort)) continue;
 
     byPort.set(published.publicPort, targetFor(c, published.publicPort, `via ${parent.name}`));
   }
 
+  // 3. Published container ports
   for (const c of running) {
     for (const p of c.ports || []) {
       const port = p.publicPort;
-      // Only published ports are reachable from where Guardian runs.
-      if (!port || byPort.has(port)) continue;
+      // Only published HTTP ports are reachable from where Guardian runs.
+      if (!port || NON_HTTP_PORTS.has(port) || byPort.has(port)) continue;
 
       byPort.set(port, targetFor(c, port));
     }
   }
 
+  // 4. Host-networked containers with known default service ports if not yet covered
+  for (const c of running) {
+    if (c.networkMode === 'host' && (c.ports || []).length === 0) {
+      const wanted = defaultPortFor(c.name);
+      if (wanted && !NON_HTTP_PORTS.has(wanted) && !byPort.has(wanted)) {
+        byPort.set(wanted, targetFor(c, wanted, 'host network'));
+      }
+    }
+  }
+
+  // 5. Bookmarks
   for (const b of bookmarks) {
     const port = portFromBookmarkUrl(b.url || '');
-    if (!port || byPort.has(port)) continue;
+    if (!port || NON_HTTP_PORTS.has(port) || byPort.has(port)) continue;
     byPort.set(port, { name: b.name, port, path: '/', notes: 'bookmark' });
   }
 

@@ -158,8 +158,38 @@ export function resolveContainerUrl(
 
   let portToUse = selectedPort;
   if (!portToUse && container.ports && container.ports.length > 0) {
-    const published = container.ports.find((p) => p.publicPort);
-    portToUse = published ? published.publicPort : container.ports[0].privatePort;
+    const nonHttp = new Set([22, 53, 67, 68, 123, 554, 853, 1883, 5432, 5443, 8554, 8555, 8883, 51820, 51826]);
+    const httpPorts = container.ports.filter(
+      (p) => !nonHttp.has(p.publicPort || p.privatePort)
+    );
+    const candidatePorts = httpPorts.length > 0 ? httpPorts : container.ports;
+    const published = candidatePorts.find((p) => p.publicPort);
+    portToUse = published ? published.publicPort : candidatePorts[0].privatePort;
+  }
+
+  // Fallback to default well-known service port if container has no port mappings
+  if (!portToUse) {
+    const clean = container.name.toLowerCase().replace(/[^a-z0-9-_]/g, '');
+    const defaultPorts: Record<string, number> = {
+      go2rtc: 1984,
+      qubo: 3002,
+      adguard: 3080,
+      streamystats: 3003,
+      prowlarr: 9696,
+      radarr: 7878,
+      sonarr: 8989,
+      bazarr: 6767,
+      jellyfin: 8096,
+      seerr: 5055,
+      overseerr: 5055,
+      qbittorrent: 8081,
+    };
+    for (const [k, p] of Object.entries(defaultPorts)) {
+      if (clean.includes(k)) {
+        portToUse = p;
+        break;
+      }
+    }
   }
 
   if (portToUse) {

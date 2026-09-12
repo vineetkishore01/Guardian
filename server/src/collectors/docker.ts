@@ -1,7 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
-import { ContainerItem, DockerSystemDf, HealthProbe, PowerAction } from '../types.js';
+import { ContainerItem, ContainerPort, DockerSystemDf, HealthProbe, PowerAction } from '../types.js';
 import { logger } from '../logger.js';
 
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
@@ -470,6 +470,10 @@ interface RawInspect {
     CpuPeriod?: number;
     Memory?: number;
   };
+  Config?: {
+    ExposedPorts?: Record<string, unknown>;
+    Labels?: Record<string, string>;
+  };
 }
 
 /** Docker uses a zero-ish sentinel for "never". */
@@ -492,6 +496,8 @@ export interface ContainerDetail {
   cpuLimitCores?: number;
   /** An explicit `-m` limit, as opposed to the cgroup default of all host RAM. */
   memoryLimitConfigured?: number;
+  /** Ports exposed by the container's image or configuration. */
+  exposedPorts?: ContainerPort[];
 }
 
 /**
@@ -526,6 +532,17 @@ async function fetchContainerDetail(id: string): Promise<ContainerDetail | null>
     const raw = await dockerApiRequest<RawInspect>(`/containers/${id}/json`);
     const state = raw.State ?? {};
 
+    const exposedPorts: ContainerPort[] = [];
+    if (raw.Config?.ExposedPorts) {
+      for (const key of Object.keys(raw.Config.ExposedPorts)) {
+        const [portStr, type = 'tcp'] = key.split('/');
+        const portNum = parseInt(portStr, 10);
+        if (portNum > 0 && portNum <= 65535) {
+          exposedPorts.push({ privatePort: portNum, type });
+        }
+      }
+    }
+
     return {
       restartCount: raw.RestartCount,
       exitCode: state.ExitCode,
@@ -537,6 +554,7 @@ async function fetchContainerDetail(id: string): Promise<ContainerDetail | null>
       cpuLimitCores: deriveCpuLimitCores(raw.HostConfig),
       memoryLimitConfigured:
         raw.HostConfig?.Memory && raw.HostConfig.Memory > 0 ? raw.HostConfig.Memory : undefined,
+      exposedPorts: exposedPorts.length > 0 ? exposedPorts : undefined,
       healthLog: state.Health?.Log?.slice(-5).map((entry) => ({
         start: parseDockerTime(entry.Start) ?? 0,
         exitCode: entry.ExitCode ?? 0,
@@ -587,6 +605,9 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
     return raw.map((c) => {
       const rawName = c.Names && c.Names[0] ? c.Names[0].replace(/^\//, '') : c.Id.slice(0, 12);
       const shortId = c.Id.slice(0, 12);
+      const detail = detailMap.get(c.Id);
+      const liveStat = statsStreams.get(c.Id);
+      const state = (c.State || 'running').toLowerCase() as ContainerItem['state'];
 
       let health: 'healthy' | 'unhealthy' | 'starting' | 'none' = 'none';
       const statusLower = (c.Status || '').toLowerCase();
@@ -598,23 +619,54 @@ export async function fetchContainers(): Promise<ContainerItem[]> {
         health = 'starting';
       }
 
-      const ports = (c.Ports || []).map((p) => ({
-        privatePort: p.PrivatePort,
-        publicPort: p.PublicPort,
-        type: p.Type,
-        ip: p.IP,
-      }));
-
-      const state = (c.State || 'running').toLowerCase() as ContainerItem['state'];
-      const liveStat = statsStreams.get(c.Id);
-      const detail = detailMap.get(c.Id);
-
       // "container:abc123" — surface which container's network is shared.
       let networkParent: string | undefined;
       const nm = detail?.networkMode;
       if (nm?.startsWith('container:')) {
         const ref = nm.slice('container:'.length);
         networkParent = nameById.get(ref) ?? nameById.get(ref.slice(0, 12)) ?? ref.slice(0, 12);
+      }
+
+      let ports = (c.Ports || []).map((p) => ({
+        privatePort: p.PrivatePort,
+        publicPort: p.PublicPort,
+        type: p.Type,
+        ip: p.IP,
+      }));
+
+      // Host network mode: container shares the host network directly.
+      // Docker's /containers/json does not report NAT port mappings in c.Ports,
+      // but the container's exposed ports are directly listening on the host.
+      const isHostNet = detail?.networkMode === 'host';
+      if (ports.length === 0 && isHostNet && detail?.exposedPorts && detail.exposedPorts.length > 0) {
+        ports = detail.exposedPorts.map((p) => ({
+          ...p,
+          publicPort: p.privatePort,
+          ip: '0.0.0.0',
+        }));
+      }
+
+      // Namespace guests (e.g. network_mode: container:gluetun):
+      // Match the guest's exposed ports against the parent's published ports.
+      if (ports.length === 0 && networkParent && detail?.exposedPorts && detail.exposedPorts.length > 0) {
+        const parentRaw = raw.find((r) => {
+          const rName = r.Names?.[0]?.replace(/^\//, '');
+          return rName === networkParent || r.Id === networkParent || r.Id.startsWith(networkParent);
+        });
+        if (parentRaw) {
+          const guestPortNums = new Set(detail.exposedPorts.map((p) => p.privatePort));
+          const matchedPorts = (parentRaw.Ports || [])
+            .filter((p) => guestPortNums.has(p.PrivatePort) && p.PublicPort)
+            .map((p) => ({
+              privatePort: p.PrivatePort,
+              publicPort: p.PublicPort,
+              type: p.Type,
+              ip: p.IP,
+            }));
+          if (matchedPorts.length > 0) {
+            ports = matchedPorts;
+          }
+        }
       }
 
       return {
