@@ -144,11 +144,13 @@ export function buildProbeTargets(
   });
 
   // 1. Explicit custom URLs take precedence (e.g. AdGuard customUrl: http://192.168.0.26:3080)
+  const containersWithCustomUrl = new Set<string>();
   for (const c of running) {
     if (c.customUrl) {
       const port = portFromBookmarkUrl(c.customUrl);
       if (port && !NON_HTTP_PORTS.has(port) && !byPort.has(port)) {
         byPort.set(port, targetFor(c, port, 'custom URL'));
+        containersWithCustomUrl.add(c.name);
       }
     }
   }
@@ -171,6 +173,7 @@ export function buildProbeTargets(
 
   // 3. Published container ports
   for (const c of running) {
+    if (containersWithCustomUrl.has(c.name)) continue;
     for (const p of c.ports || []) {
       const port = p.publicPort;
       // Only published HTTP ports are reachable from where Guardian runs.
