@@ -2,6 +2,7 @@
   "name": "guardian",
   "version": "1.0.0",
   "description": "Ultra-lightweight self-hosted server & Docker dashboard + app launcher",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev:server": "cd server && npm run dev",

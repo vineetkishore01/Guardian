@@ -2,6 +2,7 @@
   "name": "guardian-server",
   "version": "1.0.0",
   "description": "Guardian lightweight backend server",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
