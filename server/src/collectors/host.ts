@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle, BatteryTelemetry, DiskIo, PressureInfo, PressureMetric } from '../types.js';
+import { HostTelemetry, MemoryInfo, ThermalSensor, FanSensor, NetworkInterface, CpuThrottle, BatteryTelemetry, DiskIo, PressureInfo, PressureMetric, UptimeInfo } from '../types.js';
 
 const PROC_DIR = process.env.HOST_PROC || '/proc';
 const SYS_DIR = process.env.HOST_SYS || '/sys';
@@ -302,11 +302,37 @@ function parseLoadAvg(): [number, number, number] {
   return [Math.round(fallback[0] * 100) / 100, Math.round(fallback[1] * 100) / 100, Math.round(fallback[2] * 100) / 100];
 }
 
-function parseUptime(): { seconds: number; formatted: string } {
+function parseBootTime(uptimeSec: number): { bootTime: number; bootFormatted: string } {
+  let btime: number | null = null;
+  const statContent = safeReadFile(path.join(PROC_DIR, 'stat'));
+  if (statContent) {
+    const match = statContent.match(/^btime\s+(\d+)/m);
+    if (match) {
+      btime = parseInt(match[1], 10) * 1000;
+    }
+  }
+  const bootMs = btime ?? (Date.now() - uptimeSec * 1000);
+  const bootDate = new Date(bootMs);
+  const bootFormatted = bootDate.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+  return { bootTime: bootMs, bootFormatted };
+}
+
+function parseUptime(): { seconds: number; formatted: string; uptimeInfo: UptimeInfo } {
   const uptimeContent = safeReadFile(path.join(PROC_DIR, 'uptime'));
   let sec = 0;
+  let idleSec = 0;
   if (uptimeContent) {
-    sec = Math.floor(parseFloat(uptimeContent.trim().split(/\s+/)[0]) || 0);
+    const parts = uptimeContent.trim().split(/\s+/);
+    sec = Math.floor(parseFloat(parts[0]) || 0);
+    idleSec = parseFloat(parts[1]) || 0;
   } else {
     sec = Math.floor(os.uptime());
   }
@@ -319,8 +345,41 @@ function parseUptime(): { seconds: number; formatted: string } {
   if (days > 0) parts.push(`${days}d`);
   if (hours > 0 || days > 0) parts.push(`${hours}h`);
   parts.push(`${minutes}m`);
+  const formatted = parts.join(' ') || '0m';
 
-  return { seconds: sec, formatted: parts.join(' ') || '0m' };
+  const { bootTime, bootFormatted } = parseBootTime(sec);
+
+  // Compute lifetime CPU idle / active percentage across cores
+  const coreCount = os.cpus().length || 1;
+  let lifetimeIdlePercent: number | undefined = undefined;
+  let lifetimeActivePercent: number | undefined = undefined;
+  if (idleSec > 0 && sec > 0) {
+    const totalCoreSec = sec * coreCount;
+    lifetimeIdlePercent = Math.max(0, Math.min(100, Math.round((idleSec / totalCoreSec) * 1000) / 10));
+    lifetimeActivePercent = Math.max(0, Math.min(100, Math.round((100 - lifetimeIdlePercent) * 10) / 10));
+  }
+
+  let status: 'stable' | 'fresh_boot' | 'long_running' = 'stable';
+  if (sec < 86400) {
+    status = 'fresh_boot';
+  } else if (sec >= 86400 * 30) {
+    status = 'long_running';
+  }
+
+  const uptimeInfo: UptimeInfo = {
+    seconds: sec,
+    formatted,
+    bootTime,
+    bootFormatted,
+    days,
+    hours,
+    minutes,
+    lifetimeIdlePercent,
+    lifetimeActivePercent,
+    status,
+  };
+
+  return { seconds: sec, formatted, uptimeInfo };
 }
 
 /**
@@ -764,6 +823,7 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
     kernel: os.release(),
     uptimeSeconds: uptime.seconds,
     uptimeFormatted: uptime.formatted,
+    uptimeInfo: uptime.uptimeInfo,
     cpu: {
       usagePercent: totalUsage,
       cores,

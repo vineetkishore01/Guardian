@@ -48,6 +48,22 @@ This document provides a comprehensive operational memory, architectural record,
 ### D. Endpoint Health Checker (`server/src/collectors/endpoints.ts`)
 - Configurable URL pinging for external / LAN services with latency tracking and status badge indication.
 
+### E. Physical Disks & S.M.A.R.T. Health (`server/src/collectors/smart.ts`)
+- Queries hardware drives using `smartctl` (`smartmontools` installed in runner image) with fallback to `/sys/block` and hwmon.
+- Discovers physical block devices (`sd*`, `nvme*n*`, `vd*`), models, vendors, serial numbers, firmware, and form factors.
+- Monitors overall SMART health (`passed`, `warning`, `failing`), temperatures, power-on hours, power cycles, and rotational speed (or SSD indication).
+- Extracts critical homelab drive failure signals: reallocated sectors (ID 5), pending sectors (ID 197), uncorrectable sectors (ID 198), UDMA CRC cable errors (ID 199), and NVMe media errors/critical warnings.
+- Tracks SSD/NVMe wearout % and endurance (TBW/TBR).
+- Maps physical drive partitions directly to filesystem mountpoints.
+- Caches measurements with a 60-second TTL to avoid spinning up sleeping disks, with a manual refresh trigger (`POST /api/disks/smart/refresh`).
+- Falls back to realistic sample disks when off-host.
+
+### F. Server Uptime & Availability (`server/src/collectors/host.ts`, `UptimeCard.tsx`)
+- Measures continuous operation down to the second with a live ticking counter.
+- Extracts boot time from `/proc/stat` (`btime`) or `/proc/uptime`.
+- Analyzes lifetime CPU efficiency by computing idle vs active time since boot from `/proc/uptime`.
+- Evaluates system stability status (`fresh_boot`, `stable`, `long_running` for 30d+ streaks) and load profile vs thread capacity.
+
 ---
 
 ## 3. Repository Branch Structure & Protection

@@ -101,7 +101,14 @@ export function Header({
                 <>
                   <span className="font-mono text-foreground">{host.hostname}</span>
                   {host.os && <span className="hidden sm:inline"> · {host.os}</span>}
-                  {host.uptimeFormatted && <span> · up {host.uptimeFormatted}</span>}
+                  {host.uptimeFormatted && (
+                    <span
+                      title={host.uptimeInfo?.bootFormatted ? `System booted: ${host.uptimeInfo.bootFormatted}` : undefined}
+                      className="cursor-default"
+                    >
+                      {' '}· up {host.uptimeFormatted}
+                    </span>
+                  )}
                 </>
               ) : (
                 'Connecting…'

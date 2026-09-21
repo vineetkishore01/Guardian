@@ -4,7 +4,9 @@ import { Header } from './components/layout/Header';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
 import { ProblemsStrip } from './components/layout/ProblemsStrip';
 import { ReclaimPanel } from './components/storage/ReclaimPanel';
+import { DiskSmartSection } from './components/storage/DiskSmartSection';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
+import { UptimeCard } from './components/metrics/UptimeCard';
 import { SystemHealthStrip } from './components/metrics/SystemHealthStrip';
 import { StorageGauges } from './components/metrics/StorageGauges';
 import { NetworkHealthCard } from './components/network/NetworkHealthCard';
@@ -209,12 +211,13 @@ export function App() {
             }
           />
           <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
+          <UptimeCard host={data?.host} />
           <SystemHealthStrip host={data?.host} />
         </section>
 
-        <section aria-labelledby="storage-heading">
+        <section aria-labelledby="storage-heading" className="space-y-3.5">
           <SectionHeading
-            title="Storage"
+            title="Storage & Filesystems"
             aside={
               storageSummary ? (
                 <span>
@@ -232,6 +235,15 @@ export function App() {
             }
           />
           <StorageGauges disks={disks} trends={data?.diskTrends} onOpenHistory={() => openMetric('disk')} />
+          {data?.host?.physicalDisks && data.host.physicalDisks.length > 0 && (
+            <DiskSmartSection
+              disks={data.host.physicalDisks}
+              onRefresh={async () => {
+                await fetch('/api/disks/smart/refresh', { method: 'POST' });
+                refetch();
+              }}
+            />
+          )}
           {/* Sits under the gauges because it explains part of what fills them. */}
           {data?.reclaim && (
             <div className="mt-3">

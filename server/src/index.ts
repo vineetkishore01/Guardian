@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { collectHostTelemetry, isHostDataLive } from './collectors/host.js';
 import { collectDiskUsage } from './collectors/disk.js';
+import { collectPhysicalDisks, refreshPhysicalDisks } from './collectors/smart.js';
 import { collectGpuTelemetry } from './collectors/gpu.js';
 import { collectWanTelemetry } from './collectors/wan.js';
 import { runSpeedtest, getSpeedtestHistory, getCurrentSpeedtestProgress } from './speedtest.js';
@@ -100,16 +101,18 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
   const disks = collectDiskUsage();
 
   const config = loadUserConfig();
-  const [rawContainers, dockerDf, gpu, wan] = await Promise.all([
+  const [rawContainers, dockerDf, gpu, wan, physicalDisks] = await Promise.all([
     fetchContainers(),
     fetchDockerSystemDf(),
     collectGpuTelemetry().catch(() => []),
     collectWanTelemetry().catch(() => ({})),
+    collectPhysicalDisks(disks).catch(() => []),
   ]);
 
   const host: HostTelemetry = {
     ...hostBase,
     disks,
+    physicalDisks: physicalDisks && physicalDisks.length > 0 ? physicalDisks : undefined,
     gpu: gpu && gpu.length > 0 ? gpu : undefined,
     wan: wan && Object.keys(wan).length > 0 ? wan : undefined,
   };
@@ -559,6 +562,30 @@ app.get('/api/processes', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error('telemetry', 'Failed to collect processes', { message: (err as Error).message });
     res.status(500).json({ error: (err as Error).message, processes: [] });
+  }
+});
+
+/* --------------------------- S.M.A.R.T. & Physical Disks ------------------------- */
+
+app.get('/api/disks/smart', async (_req: Request, res: Response) => {
+  try {
+    const disks = collectDiskUsage();
+    const physicalDisks = await collectPhysicalDisks(disks);
+    res.json({ physicalDisks, count: physicalDisks.length });
+  } catch (err) {
+    logger.error('telemetry', 'Failed to read SMART disk telemetry', { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message, physicalDisks: [] });
+  }
+});
+
+app.post('/api/disks/smart/refresh', async (_req: Request, res: Response) => {
+  try {
+    const disks = collectDiskUsage();
+    const physicalDisks = await refreshPhysicalDisks(disks);
+    res.json({ success: true, count: physicalDisks.length, physicalDisks });
+  } catch (err) {
+    logger.error('telemetry', 'Failed to force-refresh SMART disk telemetry', { message: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 

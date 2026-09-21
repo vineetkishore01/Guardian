@@ -66,6 +66,90 @@ export interface DiskMount {
   tempC?: number;
 }
 
+/* ------------------------------------------------------------------ *
+ * S.M.A.R.T. & Physical Disk Telemetry
+ * ------------------------------------------------------------------ */
+
+export type DiskHealthStatus = 'passed' | 'warning' | 'critical' | 'unknown';
+export type DiskProtocol = 'nvme' | 'sata' | 'sas' | 'scsi' | 'usb' | 'virtual' | 'unknown';
+export type DiskMediaType = 'hdd' | 'ssd' | 'nvme';
+
+export interface SmartAttribute {
+  id: number;
+  name: string;
+  value: number;
+  worst: number;
+  threshold: number;
+  rawValue: number;
+  rawFormatted: string;
+  status: 'ok' | 'warn' | 'crit';
+  description?: string;
+}
+
+export interface PhysicalDiskPartition {
+  device: string;
+  name: string;
+  mountPoint?: string;
+  label?: string;
+  fsType?: string;
+  sizeBytes?: number;
+  usedBytes?: number;
+  freeBytes?: number;
+  usedPercent?: number;
+}
+
+export interface PhysicalDisk {
+  device: string;
+  name: string;
+  model: string;
+  vendor?: string;
+  serial?: string;
+  firmware?: string;
+  protocol: DiskProtocol;
+  mediaType: DiskMediaType;
+  rotational: boolean;
+  rotationRate?: number;
+  sizeBytes: number;
+  health: DiskHealthStatus;
+  healthMessage?: string;
+  tempC?: number;
+  powerOnHours?: number;
+  powerCycles?: number;
+  wearoutPercent?: number;
+  healthPercent?: number;
+  tbw?: number;
+  tbr?: number;
+  reallocatedSectors?: number;
+  pendingSectors?: number;
+  uncorrectableSectors?: number;
+  crcErrors?: number;
+  mediaErrors?: number;
+  criticalWarnings?: number;
+  unsafeShutdowns?: number;
+  partitions: PhysicalDiskPartition[];
+  smartAttributes?: SmartAttribute[];
+  smartEnabled?: boolean;
+  isSynthetic?: boolean;
+}
+
+/* ------------------------------------------------------------------ *
+ * Server Uptime & Availability
+ * ------------------------------------------------------------------ */
+
+export interface UptimeInfo {
+  seconds: number;
+  formatted: string;
+  bootTime: number;
+  bootFormatted: string;
+  days: number;
+  hours: number;
+  minutes: number;
+  lifetimeIdlePercent?: number;
+  lifetimeActivePercent?: number;
+  status: 'stable' | 'fresh_boot' | 'long_running';
+}
+
+
 /**
  * Projected fill trajectory for one filesystem.
  *
@@ -318,10 +402,12 @@ export interface HostTelemetry {
   kernel: string;
   uptimeSeconds: number;
   uptimeFormatted: string;
+  uptimeInfo?: UptimeInfo;
   cpu: CpuInfo;
   packageTempC?: number;
   memory: MemoryInfo;
   disks: DiskMount[];
+  physicalDisks?: PhysicalDisk[];
   thermals: ThermalSensor[];
   fans?: FanSensor[];
   throttle?: CpuThrottle;

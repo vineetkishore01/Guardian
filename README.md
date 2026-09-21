@@ -62,6 +62,8 @@ Guardian reads your machine directly: `/proc` and `/sys` for host metrics, the D
 | Temperature | `/sys/class/hwmon`, `/sys/class/thermal` | hwmon first — that's where `coretemp` package readings live |
 | Network | `/proc/net/dev` | Per-interface throughput; virtual and overlay interfaces are excluded from "primary link" |
 | Storage | `/proc/mounts` + `statfs` | Every real filesystem with its true device and fs type |
+| Uptime & availability | `/proc/uptime`, `/proc/stat` | Live continuous operation down to the second, boot record, and lifetime CPU efficiency |
+| S.M.A.R.T. & drive health | `smartctl`, `/sys/block` | Per-drive SMART status (PASSED/FAILING), temperatures, NVMe wearout & TBW, power-on hours, and critical sector alerts |
 
 Each metric tile opens a **history page**: full-size charts with 1H / 6H / 24H / 7D / 30D ranges, current / average / peak / minimum, and a table view.
 

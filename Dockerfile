@@ -30,7 +30,8 @@ ENV NODE_ENV=production
 ENV PORT=3001
 ENV HOST=0.0.0.0
 
-# Install production dependencies for server
+# Install production dependencies and smartmontools for hardware SMART health
+RUN apk add --no-cache smartmontools
 COPY server/package*.json ./server/
 RUN cd server && npm ci --only=production
 

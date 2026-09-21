@@ -51,6 +51,11 @@ services:
       # - /mnt/nas:/host/mnt/nas:ro
       # - /mnt/storage:/host/mnt/storage:ro
 
+      # --- Optional Physical Disks & S.M.A.R.T. Health Telemetry ---
+      # Mount host /dev to read drive SMART status, NVMe endurance, temperatures, and sector health:
+      # - /dev:/dev:ro
+      # Note: For full smartctl access to physical drives, cap_add: [SYS_RAWIO, SYS_ADMIN] or privileged: true may be set.
+
       # --- Persistent Data ---
       # Stores custom app icons, bookmarks, dashboard settings, 30-day historical metrics, and logs
       - guardian_data:/data

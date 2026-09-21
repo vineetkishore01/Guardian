@@ -198,6 +198,58 @@ export function deriveProblems(state: FullDashboardState): Problem[] {
     );
   }
 
+  /* -------------------------- physical disks / SMART -------------------------- */
+
+  for (const pDisk of host?.physicalDisks ?? []) {
+    if (pDisk.health === 'critical') {
+      push(
+        `smart:crit:${pDisk.name}`,
+        'crit',
+        'disk',
+        `Drive Failure Alert: ${pDisk.name}`,
+        `${pDisk.model} (${pDisk.device}) SMART status is critical. Immediate backup recommended.`
+      );
+    } else if (pDisk.health === 'warning') {
+      push(
+        `smart:warn:${pDisk.name}`,
+        'warn',
+        'disk',
+        `Drive Warning: ${pDisk.name}`,
+        `${pDisk.model} (${pDisk.device}) reported SMART warning flags.`
+      );
+    }
+
+    if ((pDisk.reallocatedSectors ?? 0) > 0) {
+      push(
+        `smart:reallocated:${pDisk.name}`,
+        'crit',
+        'disk',
+        `Bad Sectors: ${pDisk.name}`,
+        `${pDisk.model} has ${pDisk.reallocatedSectors} reallocated sectors.`
+      );
+    }
+
+    if ((pDisk.pendingSectors ?? 0) > 0) {
+      push(
+        `smart:pending:${pDisk.name}`,
+        'crit',
+        'disk',
+        `Pending Sectors: ${pDisk.name}`,
+        `${pDisk.model} has ${pDisk.pendingSectors} sectors awaiting reallocation.`
+      );
+    }
+
+    if ((pDisk.mediaErrors ?? 0) > 0) {
+      push(
+        `smart:media:${pDisk.name}`,
+        'crit',
+        'disk',
+        `Media Errors: ${pDisk.name}`,
+        `${pDisk.model} has logged ${pDisk.mediaErrors} media/data integrity errors.`
+      );
+    }
+  }
+
   /* ----------------------------- containers ----------------------------- */
 
   for (const c of state.containers ?? []) {
