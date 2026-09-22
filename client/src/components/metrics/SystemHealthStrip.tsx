@@ -1,9 +1,84 @@
-import { BatteryFull, BatteryWarning, Plug, PlugZap, Gauge, HardDrive, Activity } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { BatteryFull, BatteryWarning, Plug, PlugZap, Gauge, HardDrive, Activity, Clock } from 'lucide-react';
 import { HostTelemetry } from '../../types/dashboard';
 import { formatRate, cn } from '../../lib/utils';
 
 interface Props {
   host?: HostTelemetry;
+}
+
+function formatUptime(totalSeconds: number): string {
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (days > 0 || hours > 0) parts.push(`${hours}h`);
+  if (days > 0 || hours > 0 || minutes > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(' ');
+}
+
+/** Live ticking counter since boot, plus lifetime CPU activity when the server reports it. */
+function UptimeTile({ host }: { host: HostTelemetry }) {
+  const initialSeconds = host.uptimeSeconds || host.uptimeInfo?.seconds || 0;
+  const [liveSeconds, setLiveSeconds] = useState(initialSeconds);
+
+  useEffect(() => {
+    setLiveSeconds(initialSeconds);
+  }, [initialSeconds]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setLiveSeconds((prev) => prev + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const uptimeInfo = host.uptimeInfo;
+  const bootFormatted =
+    uptimeInfo?.bootFormatted ||
+    new Date(Date.now() - liveSeconds * 1000).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
+  const hasEfficiency =
+    uptimeInfo?.lifetimeActivePercent !== undefined && uptimeInfo?.lifetimeIdlePercent !== undefined;
+
+  return (
+    <div className="surface p-3.5">
+      <div className="flex items-center justify-between">
+        <span className="tile-label inline-flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5" />
+          System Uptime
+        </span>
+        <span className="tile-value tabular">{formatUptime(liveSeconds)}</span>
+      </div>
+      <div className="mt-2 truncate text-2xs text-muted-foreground">Booted {bootFormatted}</div>
+      {hasEfficiency && (
+        <div className="mt-2">
+          <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full bg-brand"
+              style={{ width: `${uptimeInfo!.lifetimeActivePercent}%` }}
+              title={`${uptimeInfo!.lifetimeActivePercent!.toFixed(1)}% active since boot`}
+            />
+            <div
+              className="h-full bg-ok/50"
+              style={{ width: `${uptimeInfo!.lifetimeIdlePercent}%` }}
+              title={`${uptimeInfo!.lifetimeIdlePercent!.toFixed(1)}% idle since boot`}
+            />
+          </div>
+          <div className="mt-1.5 flex items-center justify-between font-mono text-3xs text-muted-foreground">
+            <span>{uptimeInfo!.lifetimeActivePercent!.toFixed(1)}% active</span>
+            <span>{uptimeInfo!.lifetimeIdlePercent!.toFixed(1)}% idle</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /*
@@ -32,7 +107,6 @@ export function SystemHealthStrip({ host }: Props) {
   const stalling =
     pressure &&
     Math.max(pressure.cpu?.some10 ?? 0, pressure.io?.some10 ?? 0, pressure.memory?.some10 ?? 0) >= 1;
-  if (!battery && !throttle && busyDisks.length === 0 && !stalling) return null;
 
   const onBattery = battery?.present && !battery.onMains;
   const throttled = throttle?.throttlingNow;
@@ -40,6 +114,7 @@ export function SystemHealthStrip({ host }: Props) {
 
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <UptimeTile host={host} />
       {battery && (
         <div className={cn('surface p-3.5', onBattery && 'border-crit/50')}>
           <div className="flex items-center justify-between">

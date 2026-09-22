@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AlertCircle, RefreshCw, Info } from 'lucide-react';
 import { Header } from './components/layout/Header';
+import { SectionNav } from './components/layout/SectionNav';
 import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
 import { ProblemsStrip } from './components/layout/ProblemsStrip';
 import { ReclaimPanel } from './components/storage/ReclaimPanel';
 import { DiskSmartSection } from './components/storage/DiskSmartSection';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
-import { UptimeCard } from './components/metrics/UptimeCard';
 import { SystemHealthStrip } from './components/metrics/SystemHealthStrip';
 import { StorageGauges } from './components/metrics/StorageGauges';
 import { NetworkHealthCard } from './components/network/NetworkHealthCard';
@@ -124,6 +124,18 @@ export function App() {
     };
   }, [data?.containers, data?.config?.customApps]);
 
+  const problemsSeverity = useMemo(() => {
+    const problems = data?.problems ?? [];
+    if (problems.some((p) => p.severity === 'crit')) return 'crit' as const;
+    if (problems.some((p) => p.severity === 'warn')) return 'warn' as const;
+    return undefined;
+  }, [data?.problems]);
+
+  const servicesDownCount = useMemo(
+    () => (data?.probes ?? []).filter((p) => p.status === 'down').length,
+    [data?.probes]
+  );
+
   return (
     <div className="flex min-h-screen flex-col">
       <Header
@@ -147,6 +159,15 @@ export function App() {
           onBack={() => navigate({ name: 'dashboard' })}
         />
       ) : (
+      <>
+      <SectionNav
+        problemsCount={data?.problems?.length ?? 0}
+        problemsSeverity={problemsSeverity}
+        volumeCount={disks.length}
+        appsRunning={containerSummary.running}
+        appsTotal={containerSummary.total}
+        servicesDownCount={servicesDownCount}
+      />
       <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-7 px-4 py-6 sm:px-6 lg:px-8">
         {error && !connected && (
           <div
@@ -186,11 +207,13 @@ export function App() {
 
         {/* Above everything else: the answer to "is anything wrong?" should not
             require scrolling to the section that happens to be coloured. */}
-        <ProblemsStrip problems={data?.problems} />
+        <div id="overview" className="scroll-mt-28 space-y-3.5">
+          <ProblemsStrip problems={data?.problems} />
 
-        <PruneAdvisorBanner dockerDf={data?.dockerDf} onPrune={pruneDocker} />
+          <PruneAdvisorBanner dockerDf={data?.dockerDf} onPrune={pruneDocker} />
+        </div>
 
-        <section aria-labelledby="system-heading">
+        <section id="system" aria-labelledby="system-heading" className="scroll-mt-28">
           <SectionHeading
             title="System"
             aside={
@@ -211,11 +234,10 @@ export function App() {
             }
           />
           <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
-          <UptimeCard host={data?.host} />
           <SystemHealthStrip host={data?.host} />
         </section>
 
-        <section aria-labelledby="storage-heading" className="space-y-3.5">
+        <section id="storage" aria-labelledby="storage-heading" className="scroll-mt-28 space-y-3.5">
           <SectionHeading
             title="Storage & Filesystems"
             aside={
@@ -252,7 +274,7 @@ export function App() {
           )}
         </section>
 
-        <section aria-labelledby="network-heading">
+        <section id="network" aria-labelledby="network-heading" className="scroll-mt-28">
           <SectionHeading title="Internet & WAN" />
           <NetworkHealthCard
             wan={data?.host?.wan}
@@ -262,7 +284,7 @@ export function App() {
           />
         </section>
 
-        <section aria-labelledby="apps-heading">
+        <section id="apps" aria-labelledby="apps-heading" className="scroll-mt-28">
           <SectionHeading
             title="Applications"
             aside={
@@ -293,7 +315,7 @@ export function App() {
           />
         </section>
 
-        <section aria-labelledby="health-heading">
+        <section id="services" aria-labelledby="health-heading" className="scroll-mt-28">
           <ServicesTable
             probes={data?.probes}
             settings={data?.config?.settings}
@@ -305,6 +327,7 @@ export function App() {
           <LogsPanel />
         </section>
       </main>
+      </>
       )}
 
       <footer className="border-t border-border">

@@ -107,6 +107,7 @@ export function AppGrid({
     }
 
     const tabs = [{ id: 'all', label: 'All', count: allItems.length }];
+    if (attentionCount > 0) tabs.push({ id: 'needs-attention', label: 'Needs attention', count: attentionCount });
     if (pinnedCount > 0) tabs.push({ id: 'pinned', label: 'Pinned', count: pinnedCount });
 
     const known = PREFERRED_CATEGORY_ORDER.filter((c) => counts[c]);
@@ -118,15 +119,17 @@ export function AppGrid({
       tabs.push({ id: cat, label: cat, count: counts[cat] });
     }
     return tabs;
-  }, [allItems]);
+  }, [allItems, attentionCount]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
 
     return allItems
-      .filter(({ item }) => {
+      .filter(({ item, isCustomBookmark }) => {
         if (selectedCategory === 'pinned') {
           if (!item.pinned) return false;
+        } else if (selectedCategory === 'needs-attention') {
+          if (!needsAttention(item, isCustomBookmark)) return false;
         } else if (selectedCategory !== 'all') {
           if ((item.category || 'General') !== selectedCategory) return false;
         }
@@ -230,26 +233,22 @@ export function AppGrid({
       </div>
 
       {!loading && containers.length > 0 && (
-        <p
-          className={cn(
-            'flex items-center gap-1.5 text-2xs',
-            attentionCount > 0 ? 'text-warn' : 'text-muted-foreground'
-          )}
-          role="status"
-        >
-          {attentionCount > 0 ? (
-            <>
-              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
-              {attentionCount} container{attentionCount === 1 ? '' : 's'} need
-              {attentionCount === 1 ? 's' : ''} attention — shown first
-            </>
-          ) : (
-            <>
-              <Check className="h-3 w-3 shrink-0 text-ok" aria-hidden="true" />
-              All containers healthy
-            </>
-          )}
-        </p>
+        attentionCount > 0 ? (
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('needs-attention')}
+            className="flex items-center gap-1.5 text-2xs text-warn hover:underline"
+          >
+            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+            {attentionCount} container{attentionCount === 1 ? '' : 's'} need
+            {attentionCount === 1 ? 's' : ''} attention — shown first
+          </button>
+        ) : (
+          <p className="flex items-center gap-1.5 text-2xs text-muted-foreground" role="status">
+            <Check className="h-3 w-3 shrink-0 text-ok" aria-hidden="true" />
+            All containers healthy
+          </p>
+        )
       )}
 
       {loading ? (
