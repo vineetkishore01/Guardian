@@ -217,7 +217,7 @@ function parseAtaAttributes(table: any[]): {
     let status: 'ok' | 'warn' | 'crit' = 'ok';
     if (threshold > 0 && value <= threshold) {
       status = 'crit';
-    } else if (threshold > 0 && value <= threshold + 10) {
+    } else if (threshold > 0 && threshold < 80 && value <= threshold + 10) {
       status = 'warn';
     }
 
@@ -237,7 +237,7 @@ function parseAtaAttributes(table: any[]): {
     } else if (id === 199) {
       // UDMA CRC Error Count (SATA cable/controller issue)
       crcErrors = rawValue;
-      if (rawValue > 0) status = 'warn';
+      if (rawValue > 50) status = 'warn';
     } else if (id === 9) {
       // Power-On Hours
       powerOnHours = rawValue;
@@ -578,12 +578,24 @@ export async function collectPhysicalDisks(mounts: DiskMount[] = []): Promise<Ph
             wearoutPercent = parsed.wearoutPercent;
             healthPercent = Math.max(0, 100 - wearoutPercent);
           }
+        }
 
-          if ((reallocatedSectors ?? 0) > 0 || (pendingSectors ?? 0) > 0 || (uncorrectableSectors ?? 0) > 0) {
-            health = 'critical';
-          } else if ((crcErrors ?? 0) > 0) {
-            health = 'warning';
-          }
+        const failureReasons: string[] = [];
+        if (!isPassed) failureReasons.push('SMART self-assessment reporting failure');
+        if ((reallocatedSectors ?? 0) > 0) failureReasons.push(`${reallocatedSectors} reallocated sector(s)`);
+        if ((pendingSectors ?? 0) > 0) failureReasons.push(`${pendingSectors} pending sector(s)`);
+        if ((uncorrectableSectors ?? 0) > 0) failureReasons.push(`${uncorrectableSectors} offline uncorrectable sector(s)`);
+        if ((mediaErrors ?? 0) > 0) failureReasons.push(`${mediaErrors} NVMe media error(s)`);
+        if ((criticalWarnings ?? 0) > 0) failureReasons.push(`NVMe critical warning flag (${criticalWarnings})`);
+        if (wearoutPercent !== undefined && wearoutPercent >= 90) failureReasons.push(`Drive wearout critical (${wearoutPercent}%)`);
+        if ((crcErrors ?? 0) > 50) failureReasons.push(`${crcErrors} interface CRC errors`);
+
+        if (!isPassed || (reallocatedSectors ?? 0) > 0 || (uncorrectableSectors ?? 0) > 0 || (mediaErrors ?? 0) > 0 || (criticalWarnings ?? 0) > 0) {
+          health = 'critical';
+        } else if ((pendingSectors ?? 0) > 0 || (wearoutPercent !== undefined && wearoutPercent >= 90) || (crcErrors ?? 0) > 50) {
+          health = 'warning';
+        } else {
+          health = 'passed';
         }
 
         // Map partitions from sysBlocks or device matching
@@ -623,6 +635,7 @@ export async function collectPhysicalDisks(mounts: DiskMount[] = []): Promise<Ph
           healthMessage: smartJson.smart_status?.passed
             ? 'SMART overall-health self-assessment test: PASSED'
             : 'SMART self-assessment reporting FAILING status',
+          failureReasons: failureReasons.length > 0 ? failureReasons : undefined,
           tempC,
           powerOnHours,
           powerCycles,

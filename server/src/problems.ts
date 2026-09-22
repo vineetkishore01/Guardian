@@ -76,7 +76,7 @@ export function deriveProblems(state: FullDashboardState): Problem[] {
     }
 
     if (host.memory.swapTotalBytes > 0) {
-      const swap = level(host.memory.swapPercent, 40, 70);
+      const swap = level(host.memory.swapPercent, 60, 85);
       if (swap) {
         push(
           'host:swap',
@@ -202,20 +202,22 @@ export function deriveProblems(state: FullDashboardState): Problem[] {
 
   for (const pDisk of host?.physicalDisks ?? []) {
     if (pDisk.health === 'critical') {
+      const reason = pDisk.failureReasons?.join(', ') || 'SMART status is critical';
       push(
         `smart:crit:${pDisk.name}`,
         'crit',
         'disk',
         `Drive Failure Alert: ${pDisk.name}`,
-        `${pDisk.model} (${pDisk.device}) SMART status is critical. Immediate backup recommended.`
+        `${pDisk.model} (${pDisk.device}) ${reason}. Immediate backup recommended.`
       );
     } else if (pDisk.health === 'warning') {
+      const reason = pDisk.failureReasons?.join(', ') || 'reported SMART warning flags';
       push(
         `smart:warn:${pDisk.name}`,
         'warn',
         'disk',
         `Drive Warning: ${pDisk.name}`,
-        `${pDisk.model} (${pDisk.device}) reported SMART warning flags.`
+        `${pDisk.model} (${pDisk.device}) ${reason}.`
       );
     }
 

@@ -112,6 +112,7 @@ export interface PhysicalDisk {
   sizeBytes: number;
   health: DiskHealthStatus;
   healthMessage?: string;
+  failureReasons?: string[];
   tempC?: number;
   powerOnHours?: number;
   powerCycles?: number;
