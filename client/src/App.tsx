@@ -234,7 +234,7 @@ export function App() {
             }
           />
           <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
-          <SystemHealthStrip host={data?.host} />
+          <SystemHealthStrip host={data?.host} onOpenMetric={openMetric} />
         </section>
 
         <section id="storage" aria-labelledby="storage-heading" className="scroll-mt-28 space-y-3.5">

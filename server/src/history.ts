@@ -32,6 +32,7 @@ export const METRIC_KEYS: MetricKey[] = [
   'netRx',
   'netTx',
   'disk',
+  'battery',
 ];
 
 interface TierConfig {

@@ -102,6 +102,18 @@ export const METRIC_DEFINITIONS: Record<MetricKey, MetricDefinition> = {
     format: percent,
     formatAxis: percentAxis,
   },
+  battery: {
+    key: 'battery',
+    label: 'Battery & Power',
+    description: 'Battery charge level, power delivery source, and discharge/charge trends.',
+    unit: '%',
+    yMin: 0,
+    yMax: 100,
+    warnAt: 20,
+    critAt: 10,
+    format: percent,
+    formatAxis: percentAxis,
+  },
 };
 
 export function isMetricKey(value: string): value is MetricKey {
@@ -110,6 +122,11 @@ export function isMetricKey(value: string): value is MetricKey {
 
 export function severityForMetric(def: MetricDefinition, value: number): Severity {
   if (def.warnAt === undefined || def.critAt === undefined) return 'ok';
+  if (def.key === 'battery') {
+    if (value <= def.critAt) return 'crit';
+    if (value <= def.warnAt) return 'warn';
+    return 'ok';
+  }
   return severityFor(value, def.warnAt, def.critAt);
 }
 

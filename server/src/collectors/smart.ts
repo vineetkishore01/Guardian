@@ -666,9 +666,92 @@ export async function collectPhysicalDisks(mounts: DiskMount[] = []): Promise<Ph
     if (processedDevices.has(sysDev.name)) continue;
     processedDevices.add(sysDev.name);
 
-    const protocol: DiskProtocol = sysDev.name.startsWith('nvme') ? 'nvme' : 'sata';
-    const mediaType: DiskMediaType = sysDev.rotational ? 'hdd' : protocol === 'nvme' ? 'nvme' : 'ssd';
-    const tempC = hwmonTemps.get(sysDev.name) ?? hwmonTemps.get('drivetemp');
+    let protocol: DiskProtocol = sysDev.name.startsWith('nvme') ? 'nvme' : 'sata';
+    let mediaType: DiskMediaType = sysDev.rotational ? 'hdd' : protocol === 'nvme' ? 'nvme' : 'ssd';
+    let tempC = hwmonTemps.get(sysDev.name) ?? hwmonTemps.get('drivetemp');
+    let model = sysDev.model;
+    let vendor = sysDev.vendor || undefined;
+    let serial = sysDev.serial || undefined;
+    let firmware: string | undefined;
+    let health: DiskHealthStatus = 'passed';
+    let healthMessage = smartctlAvailable
+      ? 'Kernel block device active (controller does not expose SMART pass-through)'
+      : 'Kernel block device active (smartctl not installed)';
+    let smartEnabled = false;
+    let powerOnHours: number | undefined;
+    let powerCycles: number | undefined;
+    let wearoutPercent: number | undefined;
+    let healthPercent: number | undefined;
+    let reallocatedSectors: number | undefined;
+    let pendingSectors: number | undefined;
+    let uncorrectableSectors: number | undefined;
+    let crcErrors: number | undefined;
+    let smartAttributes: SmartAttribute[] | undefined;
+    const failureReasons: string[] = [];
+
+    if (smartctlAvailable) {
+      try {
+        let smartJson = await runSmartctl(['-a', '-j', sysDev.device]);
+        if (!smartJson && sysDev.device.startsWith('/dev/sd')) {
+          smartJson = await runSmartctl(['-a', '-j', '-d', 'sat', sysDev.device]);
+        }
+
+        if (smartJson) {
+          const isPassed = smartJson.smart_status?.passed === true;
+          health = isPassed ? 'passed' : 'critical';
+          healthMessage = isPassed
+            ? 'SMART overall-health self-assessment test: PASSED'
+            : 'SMART self-assessment reporting FAILING status';
+          smartEnabled = smartJson.smart_support?.enabled ?? true;
+
+          model = smartJson.model_name || smartJson.model_family || model;
+          vendor = smartJson.vendor || (model.includes(' ') ? model.split(' ')[0] : vendor);
+          serial = smartJson.serial_number || serial;
+          firmware = smartJson.firmware_version;
+
+          const rawProto = (smartJson.device?.protocol || '').toLowerCase();
+          if (rawProto.includes('nvme') || sysDev.name.startsWith('nvme')) protocol = 'nvme';
+          else if (rawProto.includes('sas')) protocol = 'sas';
+          else if (rawProto.includes('scsi')) protocol = 'scsi';
+          else if (rawProto.includes('usb')) protocol = 'usb';
+
+          mediaType = sysDev.rotational ? 'hdd' : protocol === 'nvme' ? 'nvme' : 'ssd';
+
+          if (smartJson.temperature?.current) tempC = smartJson.temperature.current;
+          if (smartJson.power_on_time?.hours) powerOnHours = smartJson.power_on_time.hours;
+          if (smartJson.power_cycle_count) powerCycles = smartJson.power_cycle_count;
+
+          if (Array.isArray(smartJson.ata_smart_attributes?.table)) {
+            const parsed = parseAtaAttributes(smartJson.ata_smart_attributes.table);
+            smartAttributes = parsed.attributes;
+            if (parsed.reallocated !== undefined) reallocatedSectors = parsed.reallocated;
+            if (parsed.pending !== undefined) pendingSectors = parsed.pending;
+            if (parsed.uncorrectable !== undefined) uncorrectableSectors = parsed.uncorrectable;
+            if (parsed.crcErrors !== undefined) crcErrors = parsed.crcErrors;
+            if (parsed.powerOnHours !== undefined && !powerOnHours) powerOnHours = parsed.powerOnHours;
+            if (parsed.tempC !== undefined && !tempC) tempC = parsed.tempC;
+            if (parsed.wearoutPercent !== undefined) {
+              wearoutPercent = parsed.wearoutPercent;
+              healthPercent = Math.max(0, 100 - wearoutPercent);
+            }
+          }
+
+          if (!isPassed) failureReasons.push('SMART self-assessment reporting failure');
+          if ((reallocatedSectors ?? 0) > 0) failureReasons.push(`${reallocatedSectors} reallocated sector(s)`);
+          if ((pendingSectors ?? 0) > 0) failureReasons.push(`${pendingSectors} pending sector(s)`);
+          if ((uncorrectableSectors ?? 0) > 0) failureReasons.push(`${uncorrectableSectors} offline uncorrectable sector(s)`);
+          if ((crcErrors ?? 0) > 50) failureReasons.push(`${crcErrors} interface CRC errors`);
+
+          if (!isPassed || (reallocatedSectors ?? 0) > 0 || (uncorrectableSectors ?? 0) > 0) {
+            health = 'critical';
+          } else if ((pendingSectors ?? 0) > 0 || (wearoutPercent !== undefined && wearoutPercent >= 90) || (crcErrors ?? 0) > 50) {
+            health = 'warning';
+          }
+        }
+      } catch {
+        // Fallback to kernel block device attributes
+      }
+    }
 
     const partitions: PhysicalDiskPartition[] = sysDev.partitions.map((pName) => {
       const pDev = `/dev/${pName}`;
@@ -689,18 +772,29 @@ export async function collectPhysicalDisks(mounts: DiskMount[] = []): Promise<Ph
     disks.push({
       device: sysDev.device,
       name: sysDev.name,
-      model: sysDev.model,
-      vendor: sysDev.vendor || undefined,
-      serial: sysDev.serial || undefined,
+      model,
+      vendor,
+      serial,
+      firmware,
       protocol,
       mediaType,
       rotational: sysDev.rotational,
       sizeBytes: sysDev.sizeBytes,
-      health: 'passed',
-      healthMessage: 'Kernel block device active (smartctl not installed)',
+      health,
+      healthMessage,
+      failureReasons: failureReasons.length > 0 ? failureReasons : undefined,
       tempC,
+      powerOnHours,
+      powerCycles,
+      wearoutPercent,
+      healthPercent,
+      reallocatedSectors,
+      pendingSectors,
+      uncorrectableSectors,
+      crcErrors,
       partitions,
-      smartEnabled: false,
+      smartAttributes,
+      smartEnabled,
       isSynthetic: false,
     });
   }

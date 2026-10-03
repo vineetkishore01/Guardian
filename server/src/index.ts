@@ -175,6 +175,7 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     netRx: primaryNet ? primaryNet.rxBytesPerSec : 0,
     netTx: primaryNet ? primaryNet.txBytesPerSec : 0,
     temp: primaryThermal ? primaryThermal.tempC : 0,
+    battery: host.battery?.present ? host.battery.chargePercent : undefined,
   });
 
   // Long-term store: same observation, retained for 30 days at falling
@@ -192,6 +193,7 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     netRx: primaryNet?.rxBytesPerSec,
     netTx: primaryNet?.txBytesPerSec,
     disk: fullestDisk,
+    battery: host.battery?.present ? host.battery.chargePercent : undefined,
   });
 
   // Fill trajectory per volume. Recorded every sample, but bucketed hourly

@@ -1,5 +1,24 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { ArrowLeft, RefreshCw, AlertCircle, ArrowDown, ArrowUp, Thermometer, Fan, HardDrive, Cpu } from 'lucide-react';
+import {
+  ArrowLeft,
+  RefreshCw,
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  Thermometer,
+  Fan,
+  HardDrive,
+  Cpu,
+  Battery,
+  BatteryCharging,
+  BatteryWarning,
+  Plug,
+  PlugZap,
+  Clock,
+  ArrowDownRight,
+  ArrowUpRight,
+  Zap,
+} from 'lucide-react';
 import { TimeSeriesChart, ChartSeries } from '../components/charts/TimeSeriesChart';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -62,9 +81,96 @@ function getLiveMetricValue(metric: MetricKey, host?: HostTelemetry): number | u
       if (disks.length === 0) return undefined;
       return disks.reduce((worst, d) => (d.usedPercent > worst ? d.usedPercent : worst), 0);
     }
+    case 'battery': {
+      return host.battery?.present ? host.battery.chargePercent : undefined;
+    }
     default:
       return undefined;
   }
+}
+
+interface BatteryEvent {
+  id: string;
+  type: 'charging' | 'discharging' | 'steady';
+  startTime: number;
+  endTime: number;
+  startVal: number;
+  endVal: number;
+  delta: number;
+  durationMs: number;
+  ratePerHour: number;
+}
+
+function analyzeBatterySessions(points: Array<{ t: number; v: number }>): BatteryEvent[] {
+  if (!points || points.length < 2) return [];
+
+  const events: BatteryEvent[] = [];
+  let segStart = points[0];
+  let segPrev = points[0];
+  let currentTrend: 'charging' | 'discharging' | 'steady' = 'steady';
+
+  for (let i = 1; i < points.length; i++) {
+    const pt = points[i];
+    const diff = pt.v - segPrev.v;
+
+    let pointTrend: 'charging' | 'discharging' | 'steady' = 'steady';
+    if (diff > 0.3) pointTrend = 'charging';
+    else if (diff < -0.3) pointTrend = 'discharging';
+    else pointTrend = currentTrend;
+
+    if (currentTrend === 'steady') {
+      currentTrend = pointTrend;
+    } else if (pointTrend !== 'steady' && pointTrend !== currentTrend) {
+      const durationMs = segPrev.t - segStart.t;
+      const delta = segPrev.v - segStart.v;
+      if (durationMs >= 60_000 && Math.abs(delta) >= 1) {
+        const hours = durationMs / 3_600_000;
+        events.push({
+          id: `${segStart.t}-${segPrev.t}`,
+          type: currentTrend,
+          startTime: segStart.t,
+          endTime: segPrev.t,
+          startVal: segStart.v,
+          endVal: segPrev.v,
+          delta,
+          durationMs,
+          ratePerHour: hours > 0 ? delta / hours : 0,
+        });
+      }
+      segStart = segPrev;
+      currentTrend = pointTrend;
+    }
+    segPrev = pt;
+  }
+
+  const finalDuration = segPrev.t - segStart.t;
+  const finalDelta = segPrev.v - segStart.v;
+  if (finalDuration >= 30_000 && (Math.abs(finalDelta) >= 0.5 || currentTrend !== 'steady')) {
+    const hours = finalDuration / 3_600_000;
+    events.push({
+      id: `${segStart.t}-${segPrev.t}`,
+      type: currentTrend,
+      startTime: segStart.t,
+      endTime: segPrev.t,
+      startVal: segStart.v,
+      endVal: segPrev.v,
+      delta: finalDelta,
+      durationMs: finalDuration,
+      ratePerHour: hours > 0 ? finalDelta / hours : 0,
+    });
+  }
+
+  return events.reverse();
+}
+
+function formatDuration(ms: number): string {
+  const totalMinutes = Math.round(ms / 60_000);
+  if (totalMinutes < 1) return '< 1 min';
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  if (minutes === 0) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
 }
 
 function StatBlock({
@@ -190,6 +296,11 @@ export function MetricDetailPage({ metric, liveHost, onBack }: MetricDetailPageP
     }
     return list;
   }, [primary, companion, def, companionDef, liveHost?.timestamp, liveValue, companionLiveValue]);
+
+  const batterySessions = useMemo(() => {
+    if (metric !== 'battery' || !primary?.points) return [];
+    return analyzeBatterySessions(primary.points);
+  }, [metric, primary?.points]);
 
   if (!valid || !def) {
     return (
@@ -430,6 +541,210 @@ export function MetricDetailPage({ metric, liveHost, onBack }: MetricDetailPageP
             </div>
           )}
         </section>
+      )}
+
+      {/* Battery & Power Hardware Breakdown and Charge/Discharge Duration Trends */}
+      {metric === 'battery' && (
+        <div className="mt-4 space-y-4">
+          {/* Hardware & Live Power Delivery Status */}
+          <section className="surface p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Battery className="h-4 w-4 text-brand" />
+                Power Delivery &amp; Hardware Status
+              </h2>
+              <span className="text-2xs text-muted-foreground">Live telemetry</span>
+            </div>
+
+            {liveHost?.battery?.present ? (
+              <div>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/80 bg-muted/20 p-3">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-lg',
+                        liveHost.battery.onMains
+                          ? 'bg-ok/10 text-ok'
+                          : 'animate-pulse bg-crit/10 text-crit'
+                      )}
+                    >
+                      {liveHost.battery.onMains ? (
+                        <Plug className="h-5 w-5" />
+                      ) : (
+                        <PlugZap className="h-5 w-5" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground">
+                          {liveHost.battery.onMains ? 'AC Mains Connected' : 'Running on Battery Power'}
+                        </span>
+                        <Badge variant={liveHost.battery.onMains ? 'ok' : 'crit'}>
+                          {liveHost.battery.status || (liveHost.battery.onMains ? 'Mains' : 'Discharging')}
+                        </Badge>
+                      </div>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {liveHost.battery.onMains
+                          ? liveHost.battery.chargePercent !== undefined && liveHost.battery.chargePercent >= 99
+                            ? 'Battery is fully charged. Running on steady wall power.'
+                            : 'Host is connected to wall power.'
+                          : liveHost.battery.minutesRemaining !== undefined
+                            ? `Wall power lost or disconnected. ~${liveHost.battery.minutesRemaining} minutes of reserve remaining.`
+                            : 'Wall power lost or disconnected. Running on internal battery reserve.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {liveHost.battery.chargePercent !== undefined && (
+                    <div className="text-right">
+                      <div className="tabular text-2xl font-bold tracking-tight text-foreground">
+                        {liveHost.battery.chargePercent}%
+                      </div>
+                      <div className="text-2xs text-muted-foreground">Charge Remaining</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                  <StatBlock
+                    label="State"
+                    value={liveHost.battery.status || (liveHost.battery.onMains ? 'Mains' : 'Discharging')}
+                  />
+                  <StatBlock
+                    label="Power Draw"
+                    value={liveHost.battery.powerWatts !== undefined ? `${liveHost.battery.powerWatts.toFixed(1)} W` : '—'}
+                  />
+                  <StatBlock
+                    label="Voltage"
+                    value={liveHost.battery.voltageVolts !== undefined ? `${liveHost.battery.voltageVolts.toFixed(2)} V` : '—'}
+                  />
+                  <StatBlock
+                    label="Runtime Left"
+                    value={
+                      liveHost.battery.minutesRemaining !== undefined
+                        ? `${Math.floor(liveHost.battery.minutesRemaining / 60)}h ${liveHost.battery.minutesRemaining % 60}m`
+                        : '—'
+                    }
+                    tone={!liveHost.battery.onMains ? 'text-crit' : undefined}
+                  />
+                  <StatBlock
+                    label="Cycles"
+                    value={
+                      liveHost.battery.cycleCount !== undefined && liveHost.battery.cycleCount > 0
+                        ? `${liveHost.battery.cycleCount}`
+                        : '—'
+                    }
+                  />
+                  <StatBlock
+                    label="Chemistry"
+                    value={liveHost.battery.technology || 'Li-ion'}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border/60 bg-muted/10 p-4 text-xs text-muted-foreground">
+                No physical battery or UPS was detected on this system (/sys/class/power_supply). Desktop and rackmount servers without a dedicated power reserve do not log battery telemetry.
+              </div>
+            )}
+          </section>
+
+          {/* Charge / Discharge Trends & Duration History */}
+          <section className="surface p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Zap className="h-4 w-4 text-brand" />
+                  Charge &amp; Discharge Trend Analysis
+                </h2>
+                <p className="mt-0.5 text-2xs text-muted-foreground">
+                  Detected power cycle durations and charge/discharge velocity over the selected {range} window.
+                </p>
+              </div>
+              {batterySessions.length > 0 && (
+                <Badge variant="outline">
+                  {batterySessions.length} session{batterySessions.length === 1 ? '' : 's'}
+                </Badge>
+              )}
+            </div>
+
+            {batterySessions.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-border text-2xs text-muted-foreground">
+                    <tr>
+                      <th scope="col" className="py-2 font-medium">Activity</th>
+                      <th scope="col" className="py-2 font-medium">Time Window</th>
+                      <th scope="col" className="py-2 text-right font-medium">Duration</th>
+                      <th scope="col" className="py-2 text-right font-medium">Level Range</th>
+                      <th scope="col" className="py-2 text-right font-medium">Net Delta</th>
+                      <th scope="col" className="py-2 text-right font-medium">Rate (%/hr)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {batterySessions.map((session) => {
+                      const isCharging = session.type === 'charging';
+                      const isDischarging = session.type === 'discharging';
+                      return (
+                        <tr key={session.id} className="hover:bg-muted/30">
+                          <td className="py-2.5">
+                            <span className="flex items-center gap-1.5 font-medium">
+                              {isCharging ? (
+                                <>
+                                  <ArrowUpRight className="h-4 w-4 text-ok" />
+                                  <span className="text-ok">Charging</span>
+                                </>
+                              ) : isDischarging ? (
+                                <>
+                                  <ArrowDownRight className="h-4 w-4 text-warn" />
+                                  <span className="text-warn">Discharging</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-muted-foreground">Steady</span>
+                                </>
+                              )}
+                            </span>
+                          </td>
+                          <td className="py-2.5 font-mono text-2xs text-muted-foreground">
+                            {new Date(session.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {' – '}
+                            {new Date(session.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-2.5 text-right font-medium text-foreground">
+                            {formatDuration(session.durationMs)}
+                          </td>
+                          <td className="py-2.5 text-right font-mono text-muted-foreground">
+                            {session.startVal.toFixed(0)}% → {session.endVal.toFixed(0)}%
+                          </td>
+                          <td className="py-2.5 text-right font-mono">
+                            <span
+                              className={cn(
+                                'tabular font-semibold',
+                                isCharging ? 'text-ok' : isDischarging ? 'text-warn' : 'text-foreground'
+                              )}
+                            >
+                              {session.delta > 0 ? `+${session.delta.toFixed(1)}%` : `${session.delta.toFixed(1)}%`}
+                            </span>
+                          </td>
+                          <td className="py-2.5 text-right font-mono text-muted-foreground">
+                            {session.ratePerHour !== 0
+                              ? `${session.ratePerHour > 0 ? '+' : ''}${session.ratePerHour.toFixed(1)}%/h`
+                              : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-xs text-muted-foreground">
+                No distinct charge or discharge cycles detected in the last {range}. As the host alternates between battery and mains power, durations and time-series trends will appear here.
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
       {/* Top Consuming Processes breakdown for CPU, RAM, and Network */}

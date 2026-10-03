@@ -378,6 +378,8 @@ export interface BatteryTelemetry {
   technology?: string;
   cycleCount?: number;
   minutesRemaining?: number;
+  powerWatts?: number;
+  voltageVolts?: number;
 }
 
 /**
@@ -550,6 +552,7 @@ export interface HistoryPoint {
   netRx: number;
   netTx: number;
   temp: number;
+  battery?: number;
 }
 
 export interface DashboardSettings {
@@ -625,7 +628,7 @@ export interface FullDashboardState {
  * Metric history
  * ------------------------------------------------------------------ */
 
-export type MetricKey = 'cpu' | 'ram' | 'swap' | 'temp' | 'netRx' | 'netTx' | 'disk';
+export type MetricKey = 'cpu' | 'ram' | 'swap' | 'temp' | 'netRx' | 'netTx' | 'disk' | 'battery';
 
 export type HistoryRange = '1h' | '6h' | '24h' | '7d' | '30d';
 

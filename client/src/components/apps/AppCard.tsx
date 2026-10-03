@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, Settings2, Pin, Trash2, ScrollText, AlertTriangle, RotateCcw, Loader2, ArrowDown, ArrowDownToLine , HardDrive, Gauge } from 'lucide-react';
+import {
+  ArrowUpRight,
+  Settings2,
+  Pin,
+  Trash2,
+  ScrollText,
+  AlertTriangle,
+  RotateCcw,
+  Loader2,
+  ArrowDown,
+  ArrowDownToLine,
+  HardDrive,
+  Gauge,
+  Check,
+} from 'lucide-react';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import {
   resolveContainerUrl,
@@ -54,6 +68,8 @@ export function AppCard({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const container = !isCustomBookmark ? (item as ContainerItem) : null;
   const bookmark = isCustomBookmark ? (item as CustomAppBookmark) : null;
@@ -147,8 +163,15 @@ export function AppCard({
                   onClick={async (e) => {
                     e.stopPropagation();
                     setUpdating(true);
+                    setActionError(null);
+                    setActionSuccess(null);
                     try {
                       await onUpdateContainer(container);
+                      setActionSuccess('Image updated & restarted');
+                      window.setTimeout(() => setActionSuccess(null), 4000);
+                    } catch (err) {
+                      setActionError((err as Error).message || 'Update failed');
+                      window.setTimeout(() => setActionError(null), 8000);
                     } finally {
                       setUpdating(false);
                     }
@@ -175,8 +198,15 @@ export function AppCard({
                   onClick={async (e) => {
                     e.stopPropagation();
                     setRestarting(true);
+                    setActionError(null);
+                    setActionSuccess(null);
                     try {
                       await onRestartContainer(container);
+                      setActionSuccess('Restarted');
+                      window.setTimeout(() => setActionSuccess(null), 3000);
+                    } catch (err) {
+                      setActionError((err as Error).message || 'Restart failed');
+                      window.setTimeout(() => setActionError(null), 6000);
                     } finally {
                       setRestarting(false);
                     }
@@ -400,6 +430,27 @@ export function AppCard({
             )}
             {container.cpuPercent !== undefined && container.memoryBytes !== undefined && ' · '}
             {container.memoryBytes !== undefined && formatBytes(container.memoryBytes, 0)}
+          </div>
+        )}
+
+        {actionError && (
+          <div
+            role="alert"
+            onClick={(e) => e.stopPropagation()}
+            className="mt-2.5 flex items-start gap-1.5 rounded-md border border-crit/30 bg-crit-soft/80 px-2.5 py-1.5 text-2xs text-crit"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words font-medium">{actionError}</span>
+          </div>
+        )}
+
+        {actionSuccess && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mt-2.5 flex items-center gap-1.5 rounded-md border border-ok/30 bg-ok-soft/80 px-2.5 py-1.5 text-2xs font-medium text-ok"
+          >
+            <Check className="h-3.5 w-3.5 shrink-0" />
+            <span>{actionSuccess}</span>
           </div>
         )}
       </div>

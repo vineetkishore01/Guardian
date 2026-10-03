@@ -121,12 +121,25 @@ export function useLiveTelemetry() {
     async (run: () => Promise<Response>, failureMessage: string): Promise<boolean> => {
       try {
         const res = await run();
-        if (!res.ok) throw new Error(`${failureMessage} (HTTP ${res.status})`);
+        if (!res.ok) {
+          let detail = '';
+          try {
+            const body = await res.json();
+            if (body && typeof body.error === 'string') {
+              detail = `: ${body.error}`;
+            }
+          } catch {
+            // body was not JSON
+          }
+          const msg = `${failureMessage}${detail || ` (HTTP ${res.status})`}`;
+          setError(msg);
+          throw new Error(msg);
+        }
         await fetchStatus();
         return true;
       } catch (err) {
         setError((err as Error).message);
-        return false;
+        throw err;
       }
     },
     [fetchStatus]

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { BatteryFull, BatteryWarning, Plug, PlugZap, Gauge, HardDrive, Activity, Clock } from 'lucide-react';
-import { HostTelemetry } from '../../types/dashboard';
+import { BatteryFull, BatteryWarning, Plug, PlugZap, Gauge, HardDrive, Activity, Clock, ArrowRight } from 'lucide-react';
+import { HostTelemetry, MetricKey } from '../../types/dashboard';
 import { formatRate, cn } from '../../lib/utils';
 
 interface Props {
   host?: HostTelemetry;
+  onOpenMetric?: (metric: MetricKey) => void;
 }
 
 function formatUptime(totalSeconds: number): string {
@@ -95,7 +96,7 @@ function UptimeTile({ host }: { host: HostTelemetry }) {
  * without a battery or without diskstats simply show less rather than showing
  * zeroes that look like broken sensors.
  */
-export function SystemHealthStrip({ host }: Props) {
+export function SystemHealthStrip({ host, onOpenMetric }: Props) {
   if (!host) return null;
   const { battery, throttle, diskIo, pressure } = host;
   const busyDisks = (diskIo ?? []).filter((d) => d.utilPercent > 0 || d.readBytesPerSec + d.writeBytesPerSec > 0);
@@ -115,42 +116,60 @@ export function SystemHealthStrip({ host }: Props) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <UptimeTile host={host} />
-      {battery && (
-        <div className={cn('surface p-3.5', onBattery && 'border-crit/50')}>
+      {battery && battery.present && (
+        <div
+          role={onOpenMetric ? 'button' : undefined}
+          tabIndex={onOpenMetric ? 0 : undefined}
+          onClick={() => onOpenMetric?.('battery')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onOpenMetric?.('battery');
+            }
+          }}
+          className={cn(
+            'surface group p-3.5 select-none transition-all duration-200',
+            onOpenMetric && 'cursor-pointer hover:border-brand/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+            onBattery && 'border-crit/50'
+          )}
+          title="View Battery & Power discharge/recharge time-series"
+        >
           <div className="flex items-center justify-between">
             <span className="inline-flex items-center gap-1.5 text-2xs uppercase tracking-wide text-muted-foreground">
               {onBattery ? <PlugZap className="h-3.5 w-3.5 text-crit" /> : <Plug className="h-3.5 w-3.5 text-ok" />}
-              Power
+              Power & Battery
             </span>
-            <span className={cn('font-mono text-xs font-semibold', onBattery ? 'text-crit' : 'text-ok')}>
-              {onBattery ? 'ON BATTERY' : 'Mains'}
-            </span>
+            <div className="flex items-center gap-1">
+              <span className={cn('font-mono text-xs font-semibold', onBattery ? 'text-crit' : 'text-ok')}>
+                {onBattery ? 'ON BATTERY' : 'Mains'}
+              </span>
+              {onOpenMetric && (
+                <ArrowRight className="h-3 w-3 text-muted-foreground opacity-40 transition-transform group-hover:translate-x-0.5 group-hover:opacity-100" />
+              )}
+            </div>
           </div>
           <div className="mt-2 flex items-center gap-2">
-            {battery.present ? (
-              onBattery ? (
-                <BatteryWarning className="h-4 w-4 text-crit" />
-              ) : (
-                <BatteryFull className="h-4 w-4 text-muted-foreground" />
-              )
-            ) : null}
+            {onBattery ? (
+              <BatteryWarning className="h-4 w-4 text-crit shrink-0" />
+            ) : (
+              <BatteryFull className="h-4 w-4 text-muted-foreground shrink-0" />
+            )}
             <span className="text-sm font-medium text-foreground">
-              {battery.present ? `${battery.chargePercent ?? '--'}%` : 'No battery'}
+              {battery.chargePercent !== undefined ? `${battery.chargePercent}%` : '--%'}
             </span>
             <span className="truncate text-2xs text-muted-foreground">
               {battery.status}
-              {battery.minutesRemaining !== undefined && ` - ~${battery.minutesRemaining} min left`}
-              {battery.cycleCount !== undefined && battery.cycleCount > 0 && ` - ${battery.cycleCount} cycles`}
+              {battery.minutesRemaining !== undefined && ` · ~${battery.minutesRemaining} min left`}
+              {battery.powerWatts !== undefined && ` · ${battery.powerWatts}W`}
+              {battery.cycleCount !== undefined && battery.cycleCount > 0 && ` · ${battery.cycleCount} cyc`}
             </span>
           </div>
-          {battery.present && (
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className={cn('h-full rounded-full transition-all duration-500', onBattery ? 'bg-crit' : 'bg-ok')}
-                style={{ width: `${Math.min(100, Math.max(0, battery.chargePercent ?? 0))}%` }}
-              />
-            </div>
-          )}
+          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn('h-full rounded-full transition-all duration-500', onBattery ? 'bg-crit' : 'bg-ok')}
+              style={{ width: `${Math.min(100, Math.max(0, battery.chargePercent ?? 0))}%` }}
+            />
+          </div>
         </div>
       )}
 

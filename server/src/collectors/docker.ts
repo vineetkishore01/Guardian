@@ -26,7 +26,12 @@ export function isDockerLive(): boolean {
   return isDockerSocketAvailable();
 }
 
-function dockerApiRequest<T>(path: string, method: string = 'GET', postData?: unknown): Promise<T> {
+function dockerApiRequest<T>(
+  path: string,
+  method: string = 'GET',
+  postData?: unknown,
+  timeoutMs: number = 15000
+): Promise<T> {
   return new Promise((resolve, reject) => {
     if (!isDockerSocketAvailable()) {
       return reject(new Error('Docker socket not available'));
@@ -76,11 +81,11 @@ function dockerApiRequest<T>(path: string, method: string = 'GET', postData?: un
       reject(err);
     });
 
-    req.setTimeout(4000, () => {
+    req.setTimeout(timeoutMs, () => {
       if (isSettled) return;
       isSettled = true;
       req.destroy();
-      reject(new Error('Docker API request timed out'));
+      reject(new Error(`Docker API request timed out after ${timeoutMs / 1000}s`));
     });
 
     if (payload) {
@@ -1028,7 +1033,8 @@ export async function restartContainer(idOrName: string, timeoutSec: number = 10
   if (!isDockerSocketAvailable()) {
     throw new Error('Docker daemon socket is unavailable');
   }
-  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/restart?t=${timeoutSec}`, 'POST');
+  const timeoutMs = (timeoutSec + 5) * 1000;
+  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/restart?t=${timeoutSec}`, 'POST', undefined, timeoutMs);
 }
 
 /**
@@ -1038,7 +1044,8 @@ export async function stopContainer(idOrName: string, timeoutSec: number = 10): 
   if (!isDockerSocketAvailable()) {
     throw new Error('Docker daemon socket is unavailable');
   }
-  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/stop?t=${timeoutSec}`, 'POST');
+  const timeoutMs = (timeoutSec + 5) * 1000;
+  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/stop?t=${timeoutSec}`, 'POST', undefined, timeoutMs);
 }
 
 /**
@@ -1048,7 +1055,7 @@ export async function startContainer(idOrName: string): Promise<void> {
   if (!isDockerSocketAvailable()) {
     throw new Error('Docker daemon socket is unavailable');
   }
-  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/start`, 'POST');
+  await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}/start`, 'POST', undefined, 30000);
 }
 
 /**
@@ -1060,11 +1067,24 @@ export function pullDockerImage(imageName: string): Promise<string> {
       return reject(new Error('Docker daemon socket is unavailable'));
     }
 
+    let fromImage = imageName;
+    let tag = '';
+    const lastSlash = imageName.lastIndexOf('/');
+    const lastColon = imageName.lastIndexOf(':');
+    if (lastColon > lastSlash) {
+      fromImage = imageName.slice(0, lastColon);
+      tag = imageName.slice(lastColon + 1);
+    }
+
+    const pullPath = tag
+      ? `/images/create?fromImage=${encodeURIComponent(fromImage)}&tag=${encodeURIComponent(tag)}`
+      : `/images/create?fromImage=${encodeURIComponent(fromImage)}`;
+
     let isSettled = false;
     const req = http.request(
       {
         socketPath: DOCKER_SOCKET,
-        path: `/images/create?fromImage=${encodeURIComponent(imageName)}`,
+        path: pullPath,
         method: 'POST',
         headers: { Host: 'docker' },
       },
@@ -1078,6 +1098,22 @@ export function pullDockerImage(imageName: string): Promise<string> {
           if (isSettled) return;
           isSettled = true;
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            // Verify if any line in the JSON stream reported a pull failure
+            const lines = data.trim().split('\n');
+            for (const line of lines) {
+              try {
+                const parsed = JSON.parse(line.trim());
+                if (parsed.error || parsed.errorDetail) {
+                  return reject(
+                    new Error(
+                      parsed.error || parsed.errorDetail?.message || `Failed to pull image ${imageName}`
+                    )
+                  );
+                }
+              } catch {
+                // Ignore unparseable chunk fragments
+              }
+            }
             resolve(data);
           } else {
             reject(new Error(`Failed to pull image ${imageName} (${res.statusCode}): ${data.slice(0, 120)}`));
@@ -1126,23 +1162,47 @@ export async function updateAndRecreateContainer(
 
   // 1. Inspect existing container to get its exact configuration
   const inspectData = await dockerApiRequest<InspectContainerResult>(
-    `/containers/${encodeURIComponent(idOrName)}/json`
+    `/containers/${encodeURIComponent(idOrName)}/json`,
+    'GET',
+    undefined,
+    15000
   );
   if (!inspectData || !inspectData.Config) {
     throw new Error(`Could not inspect container ${idOrName}`);
   }
 
-  const rawImage = inspectData.Config.Image;
   const rawName = (inspectData.Name || idOrName).replace(/^\//, '');
+  let imageToPull = inspectData.Config.Image;
+  const labels = inspectData.Config.Labels as Record<string, string> | undefined;
+  const composeImage = labels?.['com.docker.compose.image'];
+  if (imageToPull.startsWith('sha256:') && composeImage && !composeImage.startsWith('sha256:')) {
+    imageToPull = composeImage;
+  }
+
   const config = inspectData.Config;
   const hostConfig = inspectData.HostConfig;
   const networkSettings = inspectData.NetworkSettings;
   const endpointsConfig = networkSettings?.Networks;
 
-  logger.info('docker', `Pulling updated image for ${rawName}: ${rawImage}`);
+  const sanitizedEndpointsConfig: Record<string, unknown> = {};
+  if (endpointsConfig && typeof endpointsConfig === 'object') {
+    for (const [netName, netSettings] of Object.entries(endpointsConfig)) {
+      const ns = netSettings as Record<string, unknown>;
+      sanitizedEndpointsConfig[netName] = {
+        IPAMConfig: ns.IPAMConfig,
+        Links: ns.Links,
+        Aliases: ns.Aliases,
+      };
+    }
+  }
+  const networkingConfig = Object.keys(sanitizedEndpointsConfig).length > 0
+    ? { EndpointsConfig: sanitizedEndpointsConfig }
+    : undefined;
+
+  logger.info('docker', `Pulling updated image for ${rawName}: ${imageToPull}`);
 
   // 2. Pull the latest image
-  await pullDockerImage(rawImage);
+  await pullDockerImage(imageToPull);
 
   // Self-update handling: If Guardian is updating itself, spawn a detached helper runner
   const myHostname = os.hostname();
@@ -1155,8 +1215,9 @@ export async function updateAndRecreateContainer(
     logger.info('docker', `Self-update detected for ${rawName}. Spawning detached update runner...`);
     const createBody = {
       ...config,
+      Image: imageToPull,
       HostConfig: hostConfig,
-      NetworkingConfig: endpointsConfig ? { EndpointsConfig: endpointsConfig } : undefined,
+      NetworkingConfig: networkingConfig,
     };
 
     const runnerScript = `
@@ -1174,7 +1235,7 @@ function req(p, m, b) {
 async function run() {
   await new Promise(r => setTimeout(r, 1200));
   console.log('Stopping old container...');
-  await req('/containers/${encodeURIComponent(inspectData.Id)}/stop?t=5', 'POST').catch(() => {});
+  await req('/containers/${encodeURIComponent(inspectData.Id)}/stop?t=15', 'POST').catch(() => {});
   console.log('Deleting old container...');
   await req('/containers/${encodeURIComponent(inspectData.Id)}?v=false&force=true', 'DELETE').catch(() => {});
   console.log('Creating updated container...');
@@ -1187,19 +1248,19 @@ run().catch(e => console.error('Self-update runner error', e));
 `.trim();
 
     const helper = await dockerApiRequest<{ Id: string }>('/containers/create', 'POST', {
-      Image: rawImage,
+      Image: imageToPull,
       Cmd: ['node', '-e', runnerScript],
       HostConfig: {
         AutoRemove: true,
         Binds: ['/var/run/docker.sock:/var/run/docker.sock'],
       },
-    });
+    }, 30000);
 
     if (helper?.Id) {
-      await dockerApiRequest(`/containers/${helper.Id}/start`, 'POST');
+      await dockerApiRequest(`/containers/${helper.Id}/start`, 'POST', undefined, 30000);
     }
 
-    return { newId: 'self-updating', image: rawImage };
+    return { newId: 'self-updating', image: imageToPull };
   }
 
   logger.info('docker', `Stopping old container ${rawName}...`);
@@ -1215,11 +1276,27 @@ run().catch(e => console.error('Self-update runner error', e));
   try {
     await dockerApiRequest(
       `/containers/${encodeURIComponent(idOrName)}/rename?name=${encodeURIComponent(tempName)}`,
-      'POST'
+      'POST',
+      undefined,
+      30000
     );
   } catch (err) {
     logger.warn('docker', `Failed to rename container before recreate, removing directly`, err);
-    await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}?v=false&force=true`, 'DELETE');
+    await dockerApiRequest(`/containers/${encodeURIComponent(idOrName)}?v=false&force=true`, 'DELETE', undefined, 30000);
+  }
+
+  // Disconnect temp container from networks so the replacement container can bind the same IPs/aliases
+  if (endpointsConfig && typeof endpointsConfig === 'object') {
+    for (const netName of Object.keys(endpointsConfig)) {
+      try {
+        await dockerApiRequest(`/networks/${encodeURIComponent(netName)}/disconnect`, 'POST', {
+          Container: tempName,
+          Force: true,
+        }, 15000);
+      } catch {
+        // Network might already be detached or host network
+      }
+    }
   }
 
   // 5. Create the replacement container with the same configuration and updated image
@@ -1227,23 +1304,37 @@ run().catch(e => console.error('Self-update runner error', e));
   try {
     const createBody = {
       ...config,
+      Image: imageToPull,
       HostConfig: hostConfig,
-      NetworkingConfig: endpointsConfig ? { EndpointsConfig: endpointsConfig } : undefined,
+      NetworkingConfig: networkingConfig,
     };
 
     const created = await dockerApiRequest<{ Id: string }>(
       `/containers/create?name=${encodeURIComponent(rawName)}`,
       'POST',
-      createBody
+      createBody,
+      30000
     );
     newContainerId = created.Id;
   } catch (createErr) {
     // Attempt rollback if recreation failed
     logger.error('docker', `Failed to create new container for ${rawName}, attempting rollback`, createErr);
     try {
+      if (endpointsConfig && typeof endpointsConfig === 'object') {
+        for (const [netName, netSettings] of Object.entries(endpointsConfig)) {
+          try {
+            await dockerApiRequest(`/networks/${encodeURIComponent(netName)}/connect`, 'POST', {
+              Container: tempName,
+              EndpointConfig: netSettings,
+            }, 15000);
+          } catch {}
+        }
+      }
       await dockerApiRequest(
         `/containers/${encodeURIComponent(tempName)}/rename?name=${encodeURIComponent(rawName)}`,
-        'POST'
+        'POST',
+        undefined,
+        30000
       );
       await startContainer(rawName);
     } catch {}
@@ -1254,19 +1345,24 @@ run().catch(e => console.error('Self-update runner error', e));
   try {
     await startContainer(newContainerId);
   } catch (startErr) {
-    /*
-     * Roll back rather than throwing straight out. Bailing here used to skip
-     * step 7, which left the previous container stranded under its temporary
-     * `<name>_old_<timestamp>` name *and* a dead replacement holding the real
-     * name -- the host ended up running a duplicate that no longer matched the
-     * compose file. Put the old container back and restart it instead.
-     */
     logger.error('docker', `Failed to start new container ${rawName}, rolling back`, startErr);
     try {
-      await dockerApiRequest(`/containers/${encodeURIComponent(newContainerId)}?v=false&force=true`, 'DELETE');
+      await dockerApiRequest(`/containers/${encodeURIComponent(newContainerId)}?v=false&force=true`, 'DELETE', undefined, 30000);
+      if (endpointsConfig && typeof endpointsConfig === 'object') {
+        for (const [netName, netSettings] of Object.entries(endpointsConfig)) {
+          try {
+            await dockerApiRequest(`/networks/${encodeURIComponent(netName)}/connect`, 'POST', {
+              Container: tempName,
+              EndpointConfig: netSettings,
+            }, 15000);
+          } catch {}
+        }
+      }
       await dockerApiRequest(
         `/containers/${encodeURIComponent(tempName)}/rename?name=${encodeURIComponent(rawName)}`,
-        'POST'
+        'POST',
+        undefined,
+        30000
       );
       await startContainer(rawName);
       logger.info('docker', `Rolled ${rawName} back to the previous container`);
@@ -1278,13 +1374,13 @@ run().catch(e => console.error('Self-update runner error', e));
 
   // 7. Clean up the old container
   try {
-    await dockerApiRequest(`/containers/${encodeURIComponent(tempName)}?v=false&force=true`, 'DELETE');
+    await dockerApiRequest(`/containers/${encodeURIComponent(tempName)}?v=false&force=true`, 'DELETE', undefined, 30000);
   } catch {
     // Ignore cleanup error
   }
 
   logger.info('docker', `Successfully updated and started container ${rawName} (${newContainerId.slice(0, 12)})`);
-  return { newId: newContainerId, image: rawImage };
+  return { newId: newContainerId, image: imageToPull };
 }
 
 /**

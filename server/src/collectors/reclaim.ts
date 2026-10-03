@@ -44,6 +44,7 @@ const HOST_ROOT = process.env.HOST_ROOT || '/';
 let latest: ReclaimReport | null = null;
 let timer: NodeJS.Timeout | null = null;
 let scanning = false;
+let authWarned = false;
 
 export function getReclaimReport(): ReclaimReport | null {
   return latest;
@@ -350,9 +351,18 @@ export async function runReclaimScan(containers: ContainerItem[]): Promise<Recla
       finishedUnlinkedBytes,
       source: 'qbittorrent',
     };
+    authWarned = false;
     return latest;
   } catch (err) {
-    logger.warn('reclaim', 'Download scan failed', { message: (err as Error).message });
+    const msg = (err as Error).message || '';
+    if (msg.includes('HTTP 401') || msg.includes('HTTP 403')) {
+      if (!authWarned) {
+        authWarned = true;
+        logger.info('reclaim', 'qBittorrent WebUI authentication required. Configure API credentials in App settings to enable space reclaim analysis.');
+      }
+    } else {
+      logger.warn('reclaim', 'Download scan failed', { message: msg });
+    }
     return latest;
   } finally {
     scanning = false;

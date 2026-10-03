@@ -419,17 +419,28 @@ function parseBattery(): BatteryTelemetry | undefined {
       // Any online adapter counts as "on mains".
       if (num(e, 'online') === 1) onMains = true;
       else if (!entries.some((o) => read(o, 'type') === 'Mains' && num(o, 'online') === 1)) onMains = false;
-    } else if (type === 'Battery' && read(e, 'present') !== '0') {
+    } else if ((type === 'Battery' || type === 'UPS') && read(e, 'present') !== '0') {
       battery = e;
     }
   }
-  if (!battery && !mainsSeen) return undefined;
-  if (!battery) return { present: false, onMains };
+
+  // If there is no physical battery or UPS detected on the system, return undefined.
+  // This ensures standard desktop PCs and rackmount servers do not render a phantom "No battery" tile.
+  if (!battery) return undefined;
 
   // Only computable when the firmware exposes energy and draw.
   let minutesRemaining: number | undefined;
   const energyNow = num(battery, 'energy_now') ?? num(battery, 'charge_now');
   const powerNow = num(battery, 'power_now') ?? num(battery, 'current_now');
+  const voltageNow = num(battery, 'voltage_now');
+
+  let powerWatts: number | undefined;
+  if (num(battery, 'power_now')) {
+    powerWatts = Math.round(((num(battery, 'power_now') || 0) / 1e6) * 10) / 10;
+  } else if (powerNow && voltageNow) {
+    powerWatts = Math.round(((powerNow * voltageNow) / 1e12) * 10) / 10;
+  }
+
   if (energyNow !== undefined && powerNow !== undefined && powerNow > 0 && !onMains) {
     minutesRemaining = Math.round((energyNow / powerNow) * 60);
   }
@@ -442,6 +453,8 @@ function parseBattery(): BatteryTelemetry | undefined {
     technology: read(battery, 'technology'),
     cycleCount: num(battery, 'cycle_count'),
     minutesRemaining,
+    powerWatts,
+    voltageVolts: voltageNow ? Math.round((voltageNow / 1e6) * 10) / 10 : undefined,
   };
 }
 
