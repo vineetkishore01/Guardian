@@ -48,6 +48,17 @@ async function hasSmartctl(): Promise<boolean> {
   }
 }
 
+/** Check whether smartctl returned valid SMART telemetry rather than a device query error. */
+function hasSmartData(json: any): boolean {
+  return Boolean(
+    json && (
+      json.smart_status !== undefined ||
+      json.ata_smart_attributes !== undefined ||
+      json.nvme_smart_health_information_log !== undefined
+    )
+  );
+}
+
 /** Execute smartctl safely with a timeout. */
 async function runSmartctl(args: string[]): Promise<any | null> {
   try {
@@ -61,7 +72,14 @@ async function runSmartctl(args: string[]): Promise<any | null> {
     // but bits 2-7 indicate SMART warnings/errors while still returning valid JSON!
     if (err && typeof err.stdout === 'string' && err.stdout.trim().startsWith('{')) {
       try {
-        return JSON.parse(err.stdout);
+        const json = JSON.parse(err.stdout);
+        const exitStatus = typeof json.smartctl?.exit_status === 'number' ? json.smartctl.exit_status : err.code;
+        // If bit 0 or bit 1 is set (command error / unknown device / open failure) and no SMART payload was returned,
+        // treat as null so fallback flags (e.g. -d sat) can be attempted.
+        if (typeof exitStatus === 'number' && (exitStatus & 3) !== 0 && !hasSmartData(json)) {
+          return null;
+        }
+        return json;
       } catch {
         return null;
       }
@@ -487,11 +505,14 @@ export async function collectPhysicalDisks(mounts: DiskMount[] = []): Promise<Ph
 
       try {
         let smartJson = await runSmartctl(['-a', '-j', devPath]);
-        if (!smartJson && devPath.startsWith('/dev/sd')) {
+        if (!hasSmartData(smartJson) && devPath.startsWith('/dev/sd')) {
           // Attempt SCSI-to-ATA translation for external USB bridges
-          smartJson = await runSmartctl(['-a', '-j', '-d', 'sat', devPath]);
+          const satJson = await runSmartctl(['-a', '-j', '-d', 'sat', devPath]);
+          if (hasSmartData(satJson)) {
+            smartJson = satJson;
+          }
         }
-        if (!smartJson) continue;
+        if (!hasSmartData(smartJson)) continue;
 
         const isPassed = smartJson.smart_status?.passed === true;
         let health: DiskHealthStatus = isPassed ? 'passed' : 'critical';
@@ -692,11 +713,14 @@ export async function collectPhysicalDisks(mounts: DiskMount[] = []): Promise<Ph
     if (smartctlAvailable) {
       try {
         let smartJson = await runSmartctl(['-a', '-j', sysDev.device]);
-        if (!smartJson && sysDev.device.startsWith('/dev/sd')) {
-          smartJson = await runSmartctl(['-a', '-j', '-d', 'sat', sysDev.device]);
+        if (!hasSmartData(smartJson) && sysDev.device.startsWith('/dev/sd')) {
+          const satJson = await runSmartctl(['-a', '-j', '-d', 'sat', sysDev.device]);
+          if (hasSmartData(satJson)) {
+            smartJson = satJson;
+          }
         }
 
-        if (smartJson) {
+        if (hasSmartData(smartJson)) {
           const isPassed = smartJson.smart_status?.passed === true;
           health = isPassed ? 'passed' : 'critical';
           healthMessage = isPassed
