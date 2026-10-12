@@ -25,6 +25,7 @@ import {
   containerStreamCount,
 } from './collectors/docker.js';
 import { collectTopProcesses } from './collectors/processes.js';
+import { collectRouterTelemetry, getRouterTelemetry, isRouterRelevant } from './collectors/router.js';
 import { getReclaimReport, startReclaimScanner, stopReclaimScanner } from './collectors/reclaim.js';
 import {
   getServiceHealth,
@@ -101,12 +102,13 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
   const disks = collectDiskUsage();
 
   const config = loadUserConfig();
-  const [rawContainers, dockerDf, gpu, wan, physicalDisks] = await Promise.all([
+  const [rawContainers, dockerDf, gpu, wan, physicalDisks, router] = await Promise.all([
     fetchContainers(),
     fetchDockerSystemDf(),
     collectGpuTelemetry().catch(() => []),
     collectWanTelemetry().catch(() => ({})),
     collectPhysicalDisks(disks).catch(() => []),
+    collectRouterTelemetry().catch(() => getRouterTelemetry()),
   ]);
 
   const host: HostTelemetry = {
@@ -215,6 +217,7 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     reclaim: getReclaimReport() ?? undefined,
     serviceHealth: getServiceHealth().length > 0 ? getServiceHealth() : undefined,
     logSignals: getLogSignals().length > 0 ? getLogSignals() : undefined,
+    router: isRouterRelevant() ? router : undefined,
     config,
     history: globalHistory.getHistory(),
     sources: {
@@ -298,6 +301,14 @@ app.get('/api/health', (_req: Request, res: Response) => {
     containerStatStreams: containerStreamCount(),
     lastSampleAt: latestState?.host.timestamp ?? null,
   });
+});
+
+app.get('/api/router', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await collectRouterTelemetry());
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get('/api/status', async (_req: Request, res: Response, next: NextFunction) => {

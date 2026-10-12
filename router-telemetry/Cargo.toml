@@ -1,0 +1,19 @@
+[package]
+name = "router-telemetry"
+version = "0.1.0"
+edition = "2021"
+description = "Ultra-low-memory OpenWrt telemetry daemon for Guardian"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+libc = { version = "0.2", default-features = false }
+
+[profile.release]
+opt-level = "z"
+panic = "abort"
+codegen-units = 1
+strip = true
+debug = false
+incremental = false

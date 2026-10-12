@@ -10,6 +10,7 @@ import { HostStatsBar } from './components/metrics/HostStatsBar';
 import { SystemHealthStrip } from './components/metrics/SystemHealthStrip';
 import { StorageGauges } from './components/metrics/StorageGauges';
 import { NetworkHealthCard } from './components/network/NetworkHealthCard';
+import { RouterTelemetryCard } from './components/network/RouterTelemetryCard';
 import { AppGrid } from './components/apps/AppGrid';
 import { ServicesTable } from './components/services/ServicesTable';
 import { SettingsModal } from './components/layout/SettingsModal';
@@ -282,6 +283,11 @@ export function App() {
             onRunSpeedtest={runSpeedtest}
             onRefreshWan={refreshWan}
           />
+          {data?.router && (
+            <div className="mt-3">
+              <RouterTelemetryCard router={data.router} />
+            </div>
+          )}
         </section>
 
         <section id="apps" aria-labelledby="apps-heading" className="scroll-mt-28">

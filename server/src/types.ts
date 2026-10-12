@@ -619,6 +619,8 @@ export interface FullDashboardState {
   logSignals?: ContainerLogSignal[];
   /** Fill projections, keyed by mount point. Absent until enough history exists. */
   diskTrends?: DiskTrend[];
+  /** OpenWrt router telemetry. Absent when the daemon has never answered. */
+  router?: RouterTelemetry;
   config: UserConfigStore;
   history: HistoryPoint[];
   sources: DataSources;
@@ -703,4 +705,111 @@ export interface ProcessItem {
   memBytes: number;
   netRxBytesPerSec?: number;
   netTxBytesPerSec?: number;
+}
+
+/* ------------------------------------------------------------------ *
+ * Router telemetry (router-telemetry daemon on OpenWrt)
+ * ------------------------------------------------------------------ */
+
+export interface RouterMemory {
+  total_bytes: number;
+  available_bytes: number;
+  used_bytes: number;
+  used_percent: number;
+  swap_total_bytes: number;
+  swap_free_bytes: number;
+  swap_used_percent: number;
+}
+
+export interface RouterStorage {
+  mount: string;
+  total_bytes: number;
+  free_bytes: number;
+  used_bytes: number;
+  used_percent: number;
+}
+
+export interface RouterSystem {
+  hostname: string;
+  model: string;
+  kernel: string;
+  uptime_secs: number;
+  load_average: [number, number, number];
+  cpu_count: number;
+  cpu_usage_percent: number;
+  memory: RouterMemory;
+  usb_storage: RouterStorage | null;
+}
+
+export type RouterWanRole = 'primary' | 'backup';
+
+export interface RouterWanInterface {
+  name: string;
+  device: string;
+  label: string;
+  role: RouterWanRole;
+  status: string;
+  online: boolean;
+  latency_ms: number | null;
+  uptime: string | null;
+}
+
+export interface RouterMultiWan {
+  source: 'mwan3' | 'sysfs';
+  interfaces: RouterWanInterface[];
+  active: string | null;
+  failover: boolean;
+}
+
+export interface RouterIspBandwidth {
+  interface: string;
+  label: string;
+  role: RouterWanRole;
+  today_rx_bytes: number;
+  today_tx_bytes: number;
+  month_rx_bytes: number;
+  month_tx_bytes: number;
+}
+
+export interface RouterWifiRadio {
+  device: string;
+  ssid: string;
+  mode: string;
+  channel: number | null;
+  frequency_ghz: number | null;
+  clients: number;
+}
+
+export interface RouterWifi {
+  total_clients: number;
+  radios: RouterWifiRadio[];
+}
+
+export interface RouterAdGuard {
+  port53_tcp: boolean;
+  port53_udp: boolean;
+  dns_responding: boolean;
+}
+
+/** Payload served by the router daemon at GET /api/telemetry. */
+export interface RouterTelemetryPayload {
+  timestamp: number;
+  version: string;
+  system: RouterSystem;
+  multi_wan: RouterMultiWan;
+  isp_bandwidth: RouterIspBandwidth[];
+  wifi: RouterWifi;
+  adguard: RouterAdGuard;
+}
+
+/**
+ * What Guardian publishes. `status` says how fresh `data` is: `live` from this
+ * sample, `stale` from the last good fetch, `offline` when nothing is known.
+ */
+export interface RouterTelemetry {
+  status: 'live' | 'stale' | 'offline';
+  endpoint: string;
+  fetchedAt: number | null;
+  error?: string;
+  data: RouterTelemetryPayload | null;
 }
