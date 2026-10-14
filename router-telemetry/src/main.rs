@@ -6,6 +6,7 @@
 //! and the steady-state footprint is a few hundred KiB of heap.
 
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -168,6 +169,8 @@ struct WanIface {
     online: bool,
     latency_ms: Option<f64>,
     uptime: Option<String>,
+    rx_rate_mbps: f64,
+    tx_rate_mbps: f64,
 }
 
 #[derive(Serialize, Default, Clone)]
@@ -182,9 +185,20 @@ struct IspBandwidth {
 }
 
 #[derive(Serialize, Default, Clone)]
+struct ConnectedClient {
+    hostname: String,
+    ip: String,
+    mac: String,
+    connection_type: String,
+    signal_dbm: Option<i32>,
+    tx_rate_mbps: Option<f64>,
+}
+
+#[derive(Serialize, Default, Clone)]
 struct Wifi {
     total_clients: u32,
     radios: Vec<Radio>,
+    clients: Vec<ConnectedClient>,
 }
 
 #[derive(Serialize, Default, Clone)]
@@ -387,7 +401,7 @@ fn ping_latency(device: &str) -> Option<f64> {
     rest[..end].parse().ok()
 }
 
-fn collect_multi_wan(cfg: &Config) -> MultiWan {
+fn collect_multi_wan(cfg: &Config, rates: &HashMap<String, (f64, f64)>) -> MultiWan {
     let uplinks = [(&cfg.primary, "primary"), (&cfg.backup, "backup")];
     let mut ifaces: Vec<WanIface> = uplinks
         .iter()
@@ -402,12 +416,7 @@ fn collect_multi_wan(cfg: &Config) -> MultiWan {
         .collect();
 
     let mut source = "sysfs";
-    let mut active = None;
 
-    // `mwan3 status` lines look like:
-    //   " interface wan is online 01h:23m:45s, uptime 12h:00m:01s and tracking is active"
-    //   " interface wwan is offline and tracking is down"
-    //   "wan (100%)"  under "Current ipv4 policies:"
     if let Some(status) = run("mwan3", &["interfaces"]).or_else(|| run("mwan3", &["status"])) {
         source = "mwan3";
         for line in status.lines() {
@@ -428,14 +437,6 @@ fn collect_multi_wan(cfg: &Config) -> MultiWan {
                 }
             }
         }
-        if let Some(policies) = run("mwan3", &["policies"]) {
-            active = policies
-                .lines()
-                .map(str::trim)
-                .find(|l| l.contains("(100%)") || l.contains('%'))
-                .and_then(|l| l.split_whitespace().next())
-                .map(str::to_string);
-        }
     }
 
     for w in ifaces.iter_mut() {
@@ -446,20 +447,21 @@ fn collect_multi_wan(cfg: &Config) -> MultiWan {
         if w.online {
             w.latency_ms = ping_latency(&w.device);
         }
+        if let Some(&(rx, tx)) = rates.get(&w.device) {
+            w.rx_rate_mbps = rx;
+            w.tx_rate_mbps = tx;
+        }
     }
 
     let primary_online = ifaces[0].online;
     let backup_online = ifaces[1].online;
-    if active.is_none() {
-        active = if primary_online {
-            Some(ifaces[0].name.clone())
-        } else if backup_online {
-            Some(ifaces[1].name.clone())
-        } else {
-            None
-        };
-    }
-    let failover = !primary_online && active.as_deref() == Some(ifaces[1].name.as_str());
+    let (active, failover) = if primary_online {
+        (Some(ifaces[0].name.clone()), false)
+    } else if backup_online {
+        (Some(ifaces[1].name.clone()), true)
+    } else {
+        (None, false)
+    };
 
     MultiWan {
         source: source.into(),
@@ -556,17 +558,66 @@ fn collect_wifi() -> Wifi {
         if let Some(r) = current.take() {
             wifi.radios.push(r);
         }
+
+        let mut wifi_stations: HashMap<String, (String, i32, Option<f64>)> = HashMap::new();
         for r in wifi.radios.iter_mut().filter(|r| r.mode == "Master") {
-            r.clients = run("iwinfo", &[&r.device, "assoclist"])
-                .map(|s| {
-                    s.lines()
-                        .filter(|l| {
-                            let b = l.as_bytes();
-                            b.len() > 17 && b[2] == b':' && b[5] == b':'
-                        })
-                        .count() as u32
-                })
-                .unwrap_or(0);
+            let band_label = if r.frequency_ghz.map_or(false, |f| f > 4.0) {
+                "5 GHz (Hare Krishna)"
+            } else {
+                "2.4 GHz"
+            };
+            if let Some(assoc) = run("iwinfo", &[&r.device, "assoclist"]) {
+                let mut count = 0;
+                let mut cur_mac: Option<String> = None;
+                let mut cur_sig: Option<i32> = None;
+                for line in assoc.lines() {
+                    let trimmed = line.trim();
+                    let b = line.as_bytes();
+                    if b.len() > 17 && b[2] == b':' && b[5] == b':' {
+                        count += 1;
+                        let mac = line.split_whitespace().next().unwrap_or("").to_uppercase();
+                        let sig = line.split_whitespace().nth(1).and_then(|s| s.parse::<i32>().ok()).unwrap_or(-80);
+                        cur_mac = Some(mac);
+                        cur_sig = Some(sig);
+                    } else if let Some(ref mac) = cur_mac {
+                        if trimmed.starts_with("TX:") {
+                            let tx_mbps = trimmed.split_whitespace().nth(1).and_then(|s| s.parse::<f64>().ok());
+                            if let Some(sig) = cur_sig {
+                                wifi_stations.insert(mac.clone(), (band_label.to_string(), sig, tx_mbps));
+                            }
+                        }
+                    }
+                }
+                r.clients = count;
+            }
+        }
+
+        if let Some(leases) = read("/tmp/dhcp.leases") {
+            for line in leases.lines() {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.len() >= 4 {
+                    let mac = cols[1].to_uppercase();
+                    let ip = cols[2].to_string();
+                    let mut hostname = cols[3].to_string();
+                    if hostname == "*" || hostname.is_empty() {
+                        let end = if mac.len() >= 5 { &mac[mac.len()-5..] } else { &mac };
+                        hostname = format!("Device ({end})");
+                    }
+                    let (conn_type, sig, tx_rate) = if let Some((band, s, r)) = wifi_stations.get(&mac) {
+                        (band.clone(), Some(*s), *r)
+                    } else {
+                        ("Wired / LAN".to_string(), None, None)
+                    };
+                    wifi.clients.push(ConnectedClient {
+                        hostname,
+                        ip,
+                        mac,
+                        connection_type: conn_type,
+                        signal_dbm: sig,
+                        tx_rate_mbps: tx_rate,
+                    });
+                }
+            }
         }
     } else if let Some(s) = read("/proc/net/wireless") {
         for line in s.lines().skip(2) {
@@ -578,6 +629,7 @@ fn collect_wifi() -> Wifi {
             }
         }
     }
+    wifi.clients.sort_by(|a, b| a.ip.cmp(&b.ip));
     wifi.total_clients = wifi.radios.iter().map(|r| r.clients).sum();
     wifi
 }
@@ -641,8 +693,28 @@ fn collect_adguard() -> AdGuard {
 /// Bandwidth and Wi-Fi spawn processes, so they refresh on a slower cadence.
 const SLOW_EVERY: Duration = Duration::from_secs(30);
 
+fn read_net_dev() -> HashMap<String, (u64, u64)> {
+    let mut map = HashMap::new();
+    if let Some(s) = read("/proc/net/dev") {
+        for line in s.lines() {
+            if let Some((dev, rest)) = line.split_once(':') {
+                let dev = dev.trim();
+                let cols: Vec<&str> = rest.split_whitespace().collect();
+                if cols.len() >= 9 {
+                    if let (Ok(rx), Ok(tx)) = (cols[0].parse::<u64>(), cols[8].parse::<u64>()) {
+                        map.insert(dev.to_string(), (rx, tx));
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
 fn sampler(cfg: Config, snapshot: Arc<RwLock<Vec<u8>>>) {
     let mut prev_cpu = read_cpu();
+    let mut prev_net = read_net_dev();
+    let mut prev_net_time = Instant::now();
     let mut slow_at: Option<Instant> = None;
     let mut bandwidth = Vec::new();
     let mut wifi = Wifi::default();
@@ -658,6 +730,22 @@ fn sampler(cfg: Config, snapshot: Arc<RwLock<Vec<u8>>>) {
         };
         prev_cpu = cur;
 
+        let cur_net = read_net_dev();
+        let now = Instant::now();
+        let dt = now.duration_since(prev_net_time).as_secs_f64().max(0.1);
+        let mut net_rates = HashMap::new();
+        for (dev, (crx, ctx)) in &cur_net {
+            if let Some(&(prx, ptx)) = prev_net.get(dev) {
+                let drx = crx.saturating_sub(prx);
+                let dtx = ctx.saturating_sub(ptx);
+                let rx_mbps = ((drx as f64 * 8.0) / (dt * 1_000_000.0) * 100.0).round() / 100.0;
+                let tx_mbps = ((dtx as f64 * 8.0) / (dt * 1_000_000.0) * 100.0).round() / 100.0;
+                net_rates.insert(dev.clone(), (rx_mbps, tx_mbps));
+            }
+        }
+        prev_net = cur_net;
+        prev_net_time = now;
+
         if slow_at.map_or(true, |t| t.elapsed() >= SLOW_EVERY) {
             bandwidth = collect_bandwidth(&cfg);
             wifi = collect_wifi();
@@ -668,7 +756,7 @@ fn sampler(cfg: Config, snapshot: Arc<RwLock<Vec<u8>>>) {
             timestamp: now_ms(),
             version: env!("CARGO_PKG_VERSION"),
             system: collect_system(&cfg, cpu_usage),
-            multi_wan: collect_multi_wan(&cfg),
+            multi_wan: collect_multi_wan(&cfg, &net_rates),
             isp_bandwidth: bandwidth.clone(),
             wifi: wifi.clone(),
             adguard: collect_adguard(),

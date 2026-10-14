@@ -9,7 +9,7 @@ export interface DialogProps {
   title: string;
   description?: string;
   children: React.ReactNode;
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl';
   /** Rendered in the footer bar, pinned below the scrolling body. */
   footer?: React.ReactNode;
 }
@@ -20,6 +20,8 @@ const MAX_WIDTHS = {
   lg: 'max-w-lg',
   xl: 'max-w-xl',
   '2xl': 'max-w-2xl',
+  '3xl': 'max-w-3xl',
+  '4xl': 'max-w-4xl',
 };
 
 /*
@@ -148,7 +150,7 @@ export function Dialog({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div
-        className="absolute inset-0 animate-fade-in bg-background/70 backdrop-blur-sm"
+        className="absolute inset-0 animate-fade-in bg-black/60 backdrop-blur-md transition-opacity"
         onClick={() => onOpenChangeRef.current(false)}
         aria-hidden="true"
       />
@@ -161,7 +163,8 @@ export function Dialog({
         aria-describedby={description ? descId : undefined}
         className={cn(
           'relative z-10 flex max-h-[92vh] w-full flex-col animate-scale-in',
-          'rounded-t-xl border border-border bg-card text-card-foreground shadow-2xl sm:rounded-xl',
+          'rounded-t-2xl border border-border/80 bg-card text-card-foreground shadow-2xl sm:rounded-2xl',
+          'dark:border-white/10 dark:shadow-[0_24px_50px_-12px_rgba(0,0,0,0.9)]',
           MAX_WIDTHS[maxWidth]
         )}
       >

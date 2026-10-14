@@ -598,6 +598,8 @@ export interface RouterWanInterface {
   online: boolean;
   latency_ms: number | null;
   uptime: string | null;
+  rx_rate_mbps?: number;
+  tx_rate_mbps?: number;
 }
 
 export interface RouterMultiWan {
@@ -626,9 +628,19 @@ export interface RouterWifiRadio {
   clients: number;
 }
 
+export interface RouterConnectedClient {
+  hostname: string;
+  ip: string;
+  mac: string;
+  connection_type: string;
+  signal_dbm: number | null;
+  tx_rate_mbps: number | null;
+}
+
 export interface RouterWifi {
   total_clients: number;
   radios: RouterWifiRadio[];
+  clients?: RouterConnectedClient[];
 }
 
 export interface RouterAdGuard {
