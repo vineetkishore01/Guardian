@@ -156,17 +156,7 @@ const DEFAULT_SETTINGS: DashboardSettings = {
   title: 'Guardian Dashboard',
 };
 
-const DEFAULT_CUSTOM_APPS: CustomAppBookmark[] = [
-  {
-    id: 'app_casaos_host',
-    name: 'CasaOS Host Portal',
-    url: 'http://{host}:3000',
-    iconUrl: 'https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/svg/casaos.svg',
-    category: 'System',
-    description: 'CasaOS host dashboard & app store',
-    pinned: true,
-  },
-];
+const DEFAULT_CUSTOM_APPS: CustomAppBookmark[] = [];
 
 let cachedConfig: UserConfigStore | null = null;
 

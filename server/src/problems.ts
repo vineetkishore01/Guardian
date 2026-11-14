@@ -324,6 +324,18 @@ export function deriveProblems(state: FullDashboardState): Problem[] {
    */
   for (const svc of state.serviceHealth ?? []) {
     if (svc.unreachable) {
+      const container = (state.containers ?? []).find(
+        (c) =>
+          c.name.toLowerCase() === svc.name.toLowerCase() ||
+          c.displayName?.toLowerCase() === svc.name.toLowerCase() ||
+          c.name.toLowerCase().includes(svc.service)
+      );
+      // When containers have host ports stripped or rely on internal Docker health,
+      // trust Docker health metrics and do not flag an issue if the container is healthy or running.
+      if (container && (container.health === 'healthy' || container.state === 'running')) {
+        continue;
+      }
+
       push(
         `service:${svc.name}:unreachable`,
         'warn',
