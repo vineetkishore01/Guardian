@@ -4,6 +4,7 @@ dist/
 **/dist/
 data/*.json
 !data/.gitkeep
+**/secrets.json
 .env
 .env.local
 .DS_Store

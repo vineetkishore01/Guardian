@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Router,
   Cable,
@@ -21,7 +21,8 @@ import {
   Network,
 } from 'lucide-react';
 import {
-  RouterTelemetryPayload,
+  RouterTelemetry,
+  RouterFleet,
   RouterWanRole,
   RouterConnectedClient,
 } from '../../types/dashboard';
@@ -33,7 +34,9 @@ import { cn, formatBytes, formatUptime } from '../../lib/utils';
 interface RouterDetailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  data: RouterTelemetryPayload;
+  router?: RouterTelemetry;
+  fleet?: RouterFleet;
+  initialNodeId?: string;
 }
 
 const ROLE_ORDER: Record<RouterWanRole, number> = { primary: 0, backup: 1 };
@@ -60,36 +63,90 @@ function getSignalQuality(dbm: number | null): { label: string; color: string; p
   return { label: 'Weak', color: 'text-crit', percent: 25 };
 }
 
-export function RouterDetailModal({ open, onOpenChange, data }: RouterDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<'uplinks' | 'clients' | 'system'>('uplinks');
+export function RouterDetailModal({
+  open,
+  onOpenChange,
+  router,
+  fleet,
+  initialNodeId,
+}: RouterDetailModalProps) {
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(
+    initialNodeId || router?.id || fleet?.nodes[0]?.id || ''
+  );
+
+  useEffect(() => {
+    if (initialNodeId) {
+      setSelectedNodeId(initialNodeId);
+    } else if (router?.id) {
+      setSelectedNodeId(router.id);
+    } else if (fleet?.nodes[0]?.id) {
+      setSelectedNodeId(fleet.nodes[0].id);
+    }
+  }, [initialNodeId, router, fleet]);
+
+  const activeNode = useMemo(() => {
+    if (fleet?.nodes && fleet.nodes.length > 0) {
+      return fleet.nodes.find((n) => n.id === selectedNodeId) || fleet.nodes[0];
+    }
+    return router;
+  }, [fleet, selectedNodeId, router]);
+
+  const data = activeNode?.data;
+  const isGateway = activeNode?.role === 'gateway' || Boolean(data?.multi_wan);
+
+  const [activeTab, setActiveTab] = useState<'uplinks' | 'clients' | 'system'>('clients');
   const [searchQuery, setSearchQuery] = useState('');
   const [bandFilter, setBandFilter] = useState<'all' | '5ghz' | '2.4ghz' | 'wired'>('all');
   const [copiedMac, setCopiedMac] = useState<string | null>(null);
 
-  const { system, multi_wan: mwan, wifi, adguard } = data;
-  const wans = [...mwan.interfaces].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]);
-  const bandwidth = [...data.isp_bandwidth].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]);
-  const dnsOk = adguard.dns_responding || adguard.port53_udp;
-  const clients = wifi.clients || [];
+  // Set default tab on router change
+  useEffect(() => {
+    if (isGateway) {
+      setActiveTab('uplinks');
+    } else {
+      setActiveTab('clients');
+    }
+  }, [selectedNodeId, isGateway]);
 
-  const filteredClients = useMemo(() => {
-    return clients.filter((c) => {
-      // Band filter
-      if (bandFilter === '5ghz' && !c.connection_type.includes('5 GHz')) return false;
-      if (bandFilter === '2.4ghz' && !c.connection_type.includes('2.4 GHz')) return false;
-      if (bandFilter === 'wired' && !c.connection_type.includes('Wired')) return false;
+  if (!data) {
+    return (
+      <Dialog
+        open={open}
+        onOpenChange={onOpenChange}
+        title="Router Offline"
+        description="No live telemetry is currently available from this router."
+      >
+        <div className="py-8 text-center text-sm text-muted-foreground">
+          Router is unreachable. Please verify its IP and credentials.
+        </div>
+      </Dialog>
+    );
+  }
 
-      // Search query
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase();
-      return (
-        (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-        (c.ip && c.ip.toLowerCase().includes(q)) ||
-        (c.mac && c.mac.toLowerCase().includes(q)) ||
-        (c.connection_type && c.connection_type.toLowerCase().includes(q))
-      );
-    });
-  }, [clients, searchQuery, bandFilter]);
+  const { system, multi_wan: mwan, wifi, adguard, ap } = data;
+  const wans = mwan?.interfaces
+    ? [...mwan.interfaces].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role])
+    : [];
+  const bandwidth = data.isp_bandwidth
+    ? [...data.isp_bandwidth].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role])
+    : [];
+  const dnsOk = adguard ? adguard.dns_responding || adguard.port53_udp : false;
+  const clients = wifi?.clients || [];
+
+  const filteredClients = clients.filter((c) => {
+    if (bandFilter === '5ghz' && !c.connection_type.includes('5 GHz') && c.connection_type !== 'wifi') return false;
+    if (bandFilter === '2.4ghz' && !c.connection_type.includes('2.4 GHz')) return false;
+    if (bandFilter === 'wired' && !c.connection_type.includes('Wired')) return false;
+
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (c.hostname && c.hostname.toLowerCase().includes(q)) ||
+      (c.ip && c.ip.toLowerCase().includes(q)) ||
+      (c.mac && c.mac.toLowerCase().includes(q)) ||
+      (c.connection_type && c.connection_type.toLowerCase().includes(q))
+    );
+  });
 
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -97,35 +154,73 @@ export function RouterDetailModal({ open, onOpenChange, data }: RouterDetailModa
     setTimeout(() => setCopiedMac(null), 2000);
   };
 
-  const tabs: TabItem[] = [
-    { id: 'uplinks', label: 'Uplinks & Traffic', icon: <Cable className="h-3.5 w-3.5" /> },
-    {
-      id: 'clients',
-      label: 'Connected Devices',
-      count: clients.length || wifi.total_clients,
-      icon: <Wifi className="h-3.5 w-3.5" />,
-    },
-    { id: 'system', label: 'Hardware & Security', icon: <Cpu className="h-3.5 w-3.5" /> },
-  ];
+  const tabs: TabItem[] = [];
+  if (isGateway && mwan) {
+    tabs.push({ id: 'uplinks', label: 'Uplinks & Traffic', icon: <Cable className="h-3.5 w-3.5" /> });
+  }
+  tabs.push({
+    id: 'clients',
+    label: isGateway ? 'Connected Devices' : 'Associated Clients & Radios',
+    count: clients.length || wifi?.total_clients || 0,
+    icon: <Wifi className="h-3.5 w-3.5" />,
+  });
+  tabs.push({ id: 'system', label: 'Hardware & System', icon: <Cpu className="h-3.5 w-3.5" /> });
 
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={`${system.model} · Network Intelligence`}
+      title={`${activeNode?.label || system.model} · Network Intelligence`}
       description={`${system.hostname} · OpenWrt Linux ${system.kernel} · Uptime ${formatUptime(system.uptime_secs)}`}
       maxWidth="3xl"
     >
       <div className="space-y-4">
+        {/* Router Fleet Selector Bar */}
+        {fleet && fleet.nodes.length > 1 && (
+          <div className="flex items-center gap-2 overflow-x-auto border-b border-border/50 pb-2.5">
+            {fleet.nodes.map((n) => {
+              const isCurrent = n.id === selectedNodeId;
+              const isNodeGateway = n.role === 'gateway' || Boolean(n.data?.multi_wan);
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => setSelectedNodeId(n.id || '')}
+                  className={cn(
+                    'flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium transition-all shrink-0',
+                    isCurrent
+                      ? 'bg-brand text-white shadow-sm'
+                      : 'bg-muted/40 text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-2 w-2 rounded-full',
+                      n.status === 'live' ? 'bg-ok' : n.status === 'stale' ? 'bg-warn' : 'bg-crit'
+                    )}
+                  />
+                  <span>{n.label || n.data?.system?.model || n.id}</span>
+                  <span
+                    className={cn(
+                      'rounded px-1 py-0.2 font-mono text-3xs uppercase',
+                      isCurrent ? 'bg-black/20 text-white' : 'bg-muted text-muted-foreground'
+                    )}
+                  >
+                    {isNodeGateway ? 'Gateway' : 'AP'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div className="border-b border-border/60 pb-3">
           <Tabs tabs={tabs} activeTab={activeTab} onChange={(id) => setActiveTab(id as any)} />
         </div>
 
-        {/* TAB 1: Uplinks & Traffic */}
-        {activeTab === 'uplinks' && (
+        {/* TAB 1: Uplinks & Traffic (Gateways Only) */}
+        {activeTab === 'uplinks' && mwan && (
           <div className="space-y-4">
-            {/* Multi-WAN Interface Grid */}
             <div className="grid gap-3 sm:grid-cols-2">
               {wans.map((wan) => {
                 const isActive = mwan.active === wan.name;
@@ -166,7 +261,6 @@ export function RouterDetailModal({ open, onOpenChange, data }: RouterDetailModa
                       </div>
                     </div>
 
-                    {/* Live Throughput */}
                     <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-card/60 p-2 font-mono text-xs dark:bg-black/30">
                       <div>
                         <div className="flex items-center gap-1 text-3xs uppercase text-muted-foreground">
@@ -190,225 +284,165 @@ export function RouterDetailModal({ open, onOpenChange, data }: RouterDetailModa
                       </div>
                     </div>
 
-                    {/* Interface Details */}
-                    <div className="mt-3 flex items-center justify-between text-2xs text-muted-foreground">
+                    <div className="mt-2.5 flex items-center justify-between font-mono text-3xs text-muted-foreground">
                       <span>Device: {wan.device}</span>
-                      <span className="font-mono tabular">
-                        {wan.online
-                          ? wan.latency_ms !== null
-                            ? `${wan.latency_ms.toFixed(1)} ms latency`
-                            : 'Connected'
-                          : wan.status}
+                      <span>
+                        Ping:{' '}
+                        <strong className="font-semibold text-foreground">
+                          {wan.latency_ms !== null ? `${wan.latency_ms.toFixed(1)} ms` : 'N/A'}
+                        </strong>
                       </span>
                     </div>
                   </div>
                 );
               })}
             </div>
-
-            {/* ISP Bandwidth Accounting */}
-            <div className="mat-well p-3.5">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  ISP Bandwidth Accounting (vnStat)
-                </span>
-                <span className="font-mono text-3xs text-muted-foreground">Persistent on USB</span>
-              </div>
-              {bandwidth.length > 0 ? (
-                <div className="divide-y divide-border/50">
-                  {bandwidth.map((bw) => (
-                    <div key={bw.interface} className="flex items-center justify-between py-2 text-xs">
-                      <div>
-                        <div className="font-medium text-foreground">{bw.label}</div>
-                        <div className="font-mono text-3xs text-muted-foreground">
-                          {bw.role.toUpperCase()} · {bw.interface}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 text-right font-mono text-2xs tabular">
-                        <div>
-                          <div className="text-3xs text-muted-foreground">Today Total</div>
-                          <div className="font-semibold text-foreground">
-                            {formatBytes(bw.today_rx_bytes + bw.today_tx_bytes)}
-                          </div>
-                          <div className="text-3xs text-muted-foreground">
-                            ↓ {formatBytes(bw.today_rx_bytes)} · ↑ {formatBytes(bw.today_tx_bytes)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-3xs text-muted-foreground">This Month</div>
-                          <div className="font-semibold text-foreground">
-                            {formatBytes(bw.month_rx_bytes + bw.month_tx_bytes)}
-                          </div>
-                          <div className="text-3xs text-muted-foreground">
-                            ↓ {formatBytes(bw.month_rx_bytes)} · ↑ {formatBytes(bw.month_tx_bytes)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="py-3 text-center text-xs text-muted-foreground">
-                  Bandwidth history collecting on external USB...
-                </div>
-              )}
-            </div>
           </div>
         )}
 
-        {/* TAB 2: Connected Devices (Inventory) */}
+        {/* TAB 2: Connected Devices & Radios */}
         {activeTab === 'clients' && (
-          <div className="space-y-3">
-            {/* Search & Filter Toolbar */}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1">
+          <div className="space-y-4">
+            {/* Wi-Fi Radios Banner */}
+            {wifi?.radios && wifi.radios.length > 0 && (
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                {wifi.radios.map((r, i) => (
+                  <div key={i} className="mat-well flex items-center justify-between p-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+                        <Radio className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-foreground">{r.ssid}</div>
+                        <div className="font-mono text-3xs text-muted-foreground">
+                          {r.device} · Ch {r.channel || 'Auto'} · {r.frequency_ghz ? `${r.frequency_ghz} GHz` : r.mode}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rounded-full bg-muted/60 px-2 py-0.5 font-mono text-2xs font-medium text-foreground">
+                      {r.clients} stations
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Filter / Search Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Search hostname, IP, MAC address..."
+                  placeholder="Search device by name, IP, MAC..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full rounded-lg border border-border/70 bg-card/60 py-1.5 pl-8 pr-3 text-xs placeholder:text-muted-foreground focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:bg-black/30"
+                  className="w-full rounded-lg border border-border bg-card py-1.5 pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground/60 focus:border-brand focus:outline-none"
                 />
               </div>
+
               <div className="flex items-center gap-1 text-2xs">
                 {(['all', '5ghz', '2.4ghz', 'wired'] as const).map((filter) => (
                   <button
                     key={filter}
-                    type="button"
                     onClick={() => setBandFilter(filter)}
                     className={cn(
-                      'rounded-md px-2.5 py-1 font-medium transition-colors',
+                      'rounded-md px-2 py-1 font-medium capitalize transition-colors',
                       bandFilter === filter
-                        ? 'bg-brand text-brand-foreground shadow-sm'
-                        : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                        ? 'bg-brand/15 text-brand'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                     )}
                   >
-                    {filter === 'all'
-                      ? `All (${clients.length})`
-                      : filter === '5ghz'
-                      ? '5 GHz'
-                      : filter === '2.4ghz'
-                      ? '2.4 GHz'
-                      : 'Wired'}
+                    {filter === 'all' ? 'All' : filter}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Client List */}
-            {filteredClients.length > 0 ? (
-              <div className="mat-well max-h-[50vh] divide-y divide-border/40 overflow-y-auto rounded-lg">
-                {filteredClients.map((client) => {
-                  const DeviceIcon = getDeviceIcon(client);
-                  const is5G = client.connection_type.includes('5 GHz');
-                  const isWired = client.connection_type.includes('Wired');
-                  const signal = getSignalQuality(client.signal_dbm);
-
-                  return (
-                    <div
-                      key={client.mac}
-                      className="flex items-center justify-between gap-3 p-3 transition-colors hover:bg-muted/30"
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div
-                          className={cn(
-                            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/50',
-                            is5G
-                              ? 'bg-brand/10 text-brand'
-                              : isWired
-                              ? 'bg-ok/10 text-ok'
-                              : 'bg-muted text-muted-foreground'
-                          )}
-                        >
-                          <DeviceIcon className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-xs font-semibold text-foreground">
-                              {client.hostname || 'Unknown Device'}
-                            </span>
-                            <span
-                              className={cn(
-                                'rounded px-1.5 py-0.5 font-mono text-3xs font-medium',
-                                is5G
-                                  ? 'bg-brand/15 text-brand'
-                                  : isWired
-                                  ? 'bg-ok/15 text-ok'
-                                  : 'bg-muted text-muted-foreground'
-                              )}
-                            >
-                              {client.connection_type}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2 font-mono text-3xs text-muted-foreground">
-                            <span>{client.ip || 'No DHCP'}</span>
-                            <span>·</span>
-                            <span className="flex items-center gap-1">
-                              {client.mac}
+            {/* Client Device Table */}
+            <div className="mat-well overflow-hidden rounded-xl">
+              <div className="max-h-[340px] overflow-y-auto">
+                {filteredClients.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    No active clients found on this router.
+                  </div>
+                ) : (
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm border-b border-border/60 text-3xs uppercase tracking-wider text-muted-foreground">
+                      <tr>
+                        <th className="py-2 pl-3">Device / Hostname</th>
+                        <th className="py-2">IP Address</th>
+                        <th className="py-2">MAC Address</th>
+                        <th className="py-2">Signal / Rate</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40 font-mono text-2xs">
+                      {filteredClients.map((c, i) => {
+                        const Icon = getDeviceIcon(c);
+                        const sig = getSignalQuality(c.signal_dbm);
+                        const isCopied = copiedMac === c.mac;
+                        return (
+                          <tr key={i} className="hover:bg-muted/30 transition-colors">
+                            <td className="py-2 pl-3">
+                              <div className="flex items-center gap-2">
+                                <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                <span className="font-sans font-medium text-foreground truncate max-w-[150px]">
+                                  {c.hostname || 'Unknown Device'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-2 text-muted-foreground">{c.ip || '—'}</td>
+                            <td className="py-2">
                               <button
-                                type="button"
-                                onClick={() => copyToClipboard(client.mac, client.mac)}
-                                className="text-muted-foreground/60 hover:text-foreground"
-                                title="Copy MAC address"
+                                onClick={() => copyToClipboard(c.mac, c.mac)}
+                                className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors group"
+                                title="Click to copy MAC"
                               >
-                                {copiedMac === client.mac ? (
-                                  <Check className="h-2.5 w-2.5 text-ok" />
+                                <span>{c.mac}</span>
+                                {isCopied ? (
+                                  <Check className="h-3 w-3 text-ok" />
                                 ) : (
-                                  <Copy className="h-2.5 w-2.5" />
+                                  <Copy className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                                 )}
                               </button>
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Signal & PHY Speed */}
-                      <div className="flex shrink-0 items-center gap-4 text-right">
-                        {!isWired && client.signal_dbm !== null && (
-                          <div className="text-2xs">
-                            <div className={cn('flex items-center justify-end gap-1 font-mono font-medium', signal.color)}>
-                              <Signal className="h-3 w-3" />
-                              <span>{client.signal_dbm} dBm</span>
-                            </div>
-                            <div className="text-3xs text-muted-foreground">{signal.label}</div>
-                          </div>
-                        )}
-                        {client.tx_rate_mbps !== null && client.tx_rate_mbps !== undefined && (
-                          <div className="text-2xs">
-                            <div className="font-mono font-semibold tabular text-foreground">
-                              {client.tx_rate_mbps} <span className="text-3xs text-muted-foreground">Mbps</span>
-                            </div>
-                            <div className="text-3xs text-muted-foreground">PHY Link</div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                            </td>
+                            <td className="py-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className={cn('h-1.5 w-1.5 rounded-full', sig.color)} />
+                                <span className={cn('font-semibold', sig.color)}>
+                                  {c.signal_dbm ? `${c.signal_dbm} dBm` : 'Wired'}
+                                </span>
+                                {c.tx_rate_mbps && (
+                                  <span className="text-3xs text-muted-foreground">
+                                    ({c.tx_rate_mbps.toFixed(0)} Mbps)
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
               </div>
-            ) : (
-              <div className="mat-well p-8 text-center text-xs text-muted-foreground">
-                No connected devices match your search or filter.
-              </div>
-            )}
+            </div>
           </div>
         )}
 
-        {/* TAB 3: System & Security */}
+        {/* TAB 3: System & Hardware */}
         {activeTab === 'system' && (
           <div className="space-y-4">
             {/* Router Hardware Health */}
             <div className="mat-well p-3.5">
               <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                MediaTek MT7621AT Hardware Health
+                {system.model} Hardware Metrics
               </div>
               <div className="space-y-3">
                 <div>
                   <div className="mb-1 flex items-center justify-between text-2xs">
                     <span className="inline-flex items-center gap-1.5 text-muted-foreground">
                       <Cpu className="h-3.5 w-3.5 text-brand" />
-                      CPU Utilization · Load: {system.load_average.map((l) => l.toFixed(2)).join(' ')}
+                      CPU Load · Avg: {system.load_average.map((l) => l.toFixed(2)).join(' ')}
                     </span>
                     <span className="font-mono tabular text-foreground">
                       {system.cpu_usage_percent.toFixed(0)}%
@@ -431,61 +465,51 @@ export function RouterDetailModal({ open, onOpenChange, data }: RouterDetailModa
                   <Progress value={system.memory.used_percent} height="sm" />
                 </div>
 
-                {system.usb_storage && (
-                  <div>
-                    <div className="mb-1 flex items-center justify-between text-2xs">
-                      <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                        <HardDrive className="h-3.5 w-3.5 text-brand" />
-                        External USB Storage ({system.usb_storage.mount})
-                      </span>
-                      <span className="font-mono tabular text-foreground">
-                        {formatBytes(system.usb_storage.free_bytes)} free of{' '}
-                        {formatBytes(system.usb_storage.total_bytes)}
-                      </span>
-                    </div>
-                    <Progress value={system.usb_storage.used_percent} height="sm" />
+                {ap && (
+                  <div className="mt-3 rounded-lg bg-card/60 p-2.5 text-2xs font-mono text-muted-foreground">
+                    Bridge Device: <strong className="text-foreground">{ap.bridge_dev}</strong> · Upstream Gateway:{' '}
+                    <strong className="text-foreground">{ap.upstream_ip}</strong> · Status:{' '}
+                    <strong className={ap.upstream_reachable ? 'text-ok' : 'text-crit'}>
+                      {ap.upstream_reachable ? 'Connected (1Gbps Link)' : 'Unreachable'}
+                    </strong>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* AdGuard & Security Status */}
-            <div className="mat-well p-3.5">
-              <div className="mb-3 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  AdGuard Home & DNS Shield
-                </span>
-                <span
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium',
-                    dnsOk ? 'bg-ok/15 text-ok' : 'bg-crit/15 text-crit'
-                  )}
-                >
-                  {dnsOk ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
-                  {dnsOk ? 'Active & Filtering' : 'Offline'}
-                </span>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <div className="rounded-lg bg-card/60 p-2.5 dark:bg-black/30">
-                  <div className="text-3xs uppercase text-muted-foreground">DNS Port 53 UDP</div>
-                  <div className="mt-1 font-mono text-xs font-semibold text-foreground">
-                    {adguard.port53_udp ? 'Listening (OK)' : 'Unreachable'}
-                  </div>
+            {/* AdGuard if present */}
+            {adguard && (
+              <div className="mat-well p-3.5">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    AdGuard Home & DNS Shield
+                  </span>
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium',
+                      dnsOk ? 'bg-ok/15 text-ok' : 'bg-crit/15 text-crit'
+                    )}
+                  >
+                    {dnsOk ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
+                    {dnsOk ? 'Active & Filtering' : 'Offline'}
+                  </span>
                 </div>
-                <div className="rounded-lg bg-card/60 p-2.5 dark:bg-black/30">
-                  <div className="text-3xs uppercase text-muted-foreground">DNS Port 53 TCP</div>
-                  <div className="mt-1 font-mono text-xs font-semibold text-foreground">
-                    {adguard.port53_tcp ? 'Listening (OK)' : 'Unreachable'}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-lg bg-card/60 p-2.5 dark:bg-black/30">
+                    <div className="text-3xs uppercase text-muted-foreground">DNS Port 53 UDP</div>
+                    <div className="mt-1 font-mono text-xs font-semibold text-foreground">
+                      {adguard.port53_udp ? 'Listening (OK)' : 'Unreachable'}
+                    </div>
                   </div>
-                </div>
-                <div className="rounded-lg bg-card/60 p-2.5 dark:bg-black/30">
-                  <div className="text-3xs uppercase text-muted-foreground">NAND Flash Wear</div>
-                  <div className="mt-1 font-mono text-xs font-semibold text-ok">
-                    Zero Wear (RAM/USB)
+                  <div className="rounded-lg bg-card/60 p-2.5 dark:bg-black/30">
+                    <div className="text-3xs uppercase text-muted-foreground">DNS Port 53 TCP</div>
+                    <div className="mt-1 font-mono text-xs font-semibold text-foreground">
+                      {adguard.port53_tcp ? 'Listening (OK)' : 'Unreachable'}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>

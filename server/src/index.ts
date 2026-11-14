@@ -25,7 +25,7 @@ import {
   containerStreamCount,
 } from './collectors/docker.js';
 import { collectTopProcesses } from './collectors/processes.js';
-import { collectRouterTelemetry, getRouterTelemetry, isRouterRelevant } from './collectors/router.js';
+import { routerFleetManager } from './collectors/routerFleet.js';
 import { getReclaimReport, startReclaimScanner, stopReclaimScanner } from './collectors/reclaim.js';
 import {
   getServiceHealth,
@@ -50,6 +50,7 @@ import {
   sanitizeContainerOverride,
   sanitizeCustomApp,
   sanitizeSettings,
+  sanitizeRouterConfig,
 } from './store.js';
 import { globalHistory } from './ringbuffer.js';
 import {
@@ -102,14 +103,15 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
   const disks = collectDiskUsage();
 
   const config = loadUserConfig();
-  const [rawContainers, dockerDf, gpu, wan, physicalDisks, router] = await Promise.all([
+  const [rawContainers, dockerDf, gpu, wan, physicalDisks] = await Promise.all([
     fetchContainers(),
     fetchDockerSystemDf(),
     collectGpuTelemetry().catch(() => []),
     collectWanTelemetry().catch(() => ({})),
     collectPhysicalDisks(disks).catch(() => []),
-    collectRouterTelemetry().catch(() => getRouterTelemetry()),
   ]);
+  const routerFleet = routerFleetManager.getFleetTelemetry();
+  const primaryRouter = routerFleetManager.getPrimaryRouterTelemetry();
 
   const host: HostTelemetry = {
     ...hostBase,
@@ -217,7 +219,8 @@ async function sampleTelemetry(): Promise<FullDashboardState> {
     reclaim: getReclaimReport() ?? undefined,
     serviceHealth: getServiceHealth().length > 0 ? getServiceHealth() : undefined,
     logSignals: getLogSignals().length > 0 ? getLogSignals() : undefined,
-    router: isRouterRelevant() ? router : undefined,
+    router: primaryRouter,
+    routers: routerFleet,
     config,
     history: globalHistory.getHistory(),
     sources: {
@@ -303,11 +306,93 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-app.get('/api/router', async (_req: Request, res: Response, next: NextFunction) => {
+function isPrivateIp(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
+    return false;
+  }
+  if (parts[0] === 10) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 127 && parts[1] === 0 && parts[2] === 0 && parts[3] === 1) return true;
+  return false;
+}
+
+app.get('/api/router', (_req: Request, res: Response) => {
+  const primary = routerFleetManager.getPrimaryRouterTelemetry();
+  res.json(primary || { status: 'offline', endpoint: '', fetchedAt: null, data: null });
+});
+
+app.get('/api/routers', (_req: Request, res: Response) => {
+  res.json({
+    fleet: routerFleetManager.getFleetTelemetry(),
+    configs: routerFleetManager.getRouterConfigs(),
+  });
+});
+
+app.post('/api/routers/probe', async (req: Request, res: Response) => {
   try {
-    res.json(await collectRouterTelemetry());
+    const { host, port, ssl, username, password, role } = req.body || {};
+    if (!host || typeof host !== 'string') {
+      res.status(400).json({ ok: false, error: 'Host IP is required' });
+      return;
+    }
+    const cleanHost = host.trim();
+    if (!isPrivateIp(cleanHost)) {
+      res.status(400).json({ ok: false, error: 'Only local LAN IPv4 addresses are permitted for router probes' });
+      return;
+    }
+    const probeResult = await routerFleetManager.testConnection({
+      host: cleanHost,
+      port: Number(port) || 80,
+      ssl: Boolean(ssl),
+      username: username ? String(username).trim() : 'root',
+      password: password ? String(password) : undefined,
+      role: role === 'ap' ? 'ap' : 'gateway',
+    });
+    res.json(probeResult);
   } catch (err) {
-    next(err);
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+app.post('/api/routers', (req: Request, res: Response) => {
+  try {
+    const sanitized = sanitizeRouterConfig(req.body);
+    if (!sanitized) {
+      res.status(400).json({ error: 'Invalid router configuration payload' });
+      return;
+    }
+    if (!isPrivateIp(sanitized.host)) {
+      res.status(400).json({ error: 'Only local LAN IPv4 addresses are permitted' });
+      return;
+    }
+    const password = typeof req.body.password === 'string' && req.body.password ? req.body.password : undefined;
+    routerFleetManager.addOrUpdateRouter(sanitized, password);
+    res.json({
+      fleet: routerFleetManager.getFleetTelemetry(),
+      configs: routerFleetManager.getRouterConfigs(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+app.delete('/api/routers/:id', (req: Request, res: Response) => {
+  try {
+    const rawId = req.params.id;
+    const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    if (!id || typeof id !== 'string') {
+      res.status(400).json({ error: 'Router ID is required' });
+      return;
+    }
+    routerFleetManager.deleteRouter(id);
+    res.json({
+      fleet: routerFleetManager.getFleetTelemetry(),
+      configs: routerFleetManager.getRouterConfigs(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 
@@ -755,6 +840,7 @@ const server = app.listen(PORT, HOST, () => {
   startReclaimScanner(() => latestState?.containers ?? []);
   startServiceHealthScanner(() => latestState?.containers ?? []);
   startLogScanner(() => latestState?.containers ?? []);
+  routerFleetManager.start();
 });
 
 let shuttingDown = false;
@@ -774,6 +860,7 @@ function shutdown(signal: string) {
   stopReclaimScanner();
   stopServiceHealthScanner();
   stopLogScanner();
+  routerFleetManager.stop();
   logger.save();
 
   for (const client of sseClients) {

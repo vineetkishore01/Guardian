@@ -103,11 +103,11 @@ export function RouterTelemetryCard({ router }: RouterTelemetryCardProps) {
   }
 
   const { system, multi_wan: mwan, wifi, adguard } = data;
-  const wans = [...mwan.interfaces].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]);
-  const activeWan = wans.find((w) => w.name === mwan.active) || wans[0];
-  const dnsOk = adguard.dns_responding || adguard.port53_udp;
-  const clients = wifi.clients || [];
-  const clientCount = clients.length || wifi.total_clients;
+  const wans = mwan?.interfaces ? [...mwan.interfaces].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]) : [];
+  const activeWan = wans.find((w) => w.name === mwan?.active) || wans[0];
+  const dnsOk = adguard ? adguard.dns_responding || adguard.port53_udp : false;
+  const clients = wifi?.clients || [];
+  const clientCount = clients.length || wifi?.total_clients || 0;
   const count5G = clients.filter((c) => c.connection_type.includes('5 GHz')).length;
   const count2G = clients.filter((c) => c.connection_type.includes('2.4 GHz')).length;
   const countWired = clients.filter((c) => c.connection_type.includes('Wired')).length;
@@ -142,34 +142,40 @@ export function RouterTelemetryCard({ router }: RouterTelemetryCardProps) {
                 stale · {formatAgo(router.fetchedAt ?? undefined)}
               </span>
             )}
-            {mwan.failover ? (
-              <span className="rounded-full bg-warn/15 px-2 py-0.5 font-medium text-warn">
-                Failover active
-              </span>
-            ) : (
-              <span className="rounded-full bg-ok/15 px-2 py-0.5 font-medium text-ok">
-                Zero-Wear Failover Armed
+            {mwan && (
+              mwan.failover ? (
+                <span className="rounded-full bg-warn/15 px-2 py-0.5 font-medium text-warn">
+                  Failover active
+                </span>
+              ) : (
+                <span className="rounded-full bg-ok/15 px-2 py-0.5 font-medium text-ok">
+                  Zero-Wear Failover Armed
+                </span>
+              )
+            )}
+            {adguard && (
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
+                  dnsOk ? 'bg-ok/15 text-ok' : 'bg-crit/15 text-crit'
+                )}
+                title={`AdGuard DNS :53 — tcp ${adguard.port53_tcp ? 'up' : 'down'}, udp ${adguard.port53_udp ? 'up' : 'down'}`}
+              >
+                {dnsOk ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
+                AdGuard Shield
               </span>
             )}
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
-                dnsOk ? 'bg-ok/15 text-ok' : 'bg-crit/15 text-crit'
-              )}
-              title={`AdGuard DNS :53 — tcp ${adguard.port53_tcp ? 'up' : 'down'}, udp ${adguard.port53_udp ? 'up' : 'down'}`}
-            >
-              {dnsOk ? <ShieldCheck className="h-3 w-3" /> : <ShieldAlert className="h-3 w-3" />}
-              AdGuard Shield
-            </span>
           </div>
         </div>
 
         {/* Multi-WAN Uplinks Track */}
-        <div className="mt-3.5 flex flex-col gap-1.5 rounded-xl border border-border/60 bg-muted/40 p-1.5 sm:flex-row dark:border-white/5 dark:bg-black/30">
-          {wans.map((w) => (
-            <WanSegment key={w.name} wan={w} active={mwan.active === w.name} />
-          ))}
-        </div>
+        {wans.length > 0 && (
+          <div className="mt-3.5 flex flex-col gap-1.5 rounded-xl border border-border/60 bg-muted/40 p-1.5 sm:flex-row dark:border-white/5 dark:bg-black/30">
+            {wans.map((w) => (
+              <WanSegment key={w.name} wan={w} active={mwan?.active === w.name} />
+            ))}
+          </div>
+        )}
 
         {/* Decluttered Glance Wells (3 Columns) */}
         <div className="mt-3.5 grid gap-3 sm:grid-cols-3">
@@ -287,7 +293,7 @@ export function RouterTelemetryCard({ router }: RouterTelemetryCardProps) {
       </div>
 
       {/* Pop-up modal dialog with blurred background */}
-      <RouterDetailModal open={modalOpen} onOpenChange={setModalOpen} data={data} />
+      <RouterDetailModal open={modalOpen} onOpenChange={setModalOpen} router={router} />
     </>
   );
 }

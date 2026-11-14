@@ -536,6 +536,20 @@ export interface DashboardSettings {
   alertWhatsappApiKey?: string;
 }
 
+export type RouterRole = 'gateway' | 'ap';
+
+export interface RouterConfig {
+  id: string;
+  label: string;
+  host: string;
+  port?: number;
+  ssl?: boolean;
+  username: string;
+  hasPassword?: boolean;
+  role: RouterRole;
+  enabled: boolean;
+}
+
 export interface UserConfigStore {
   settings: DashboardSettings;
   containers: Record<string, {
@@ -550,6 +564,7 @@ export interface UserConfigStore {
     integrationConfig?: Record<string, string>;
   }>;
   customApps: CustomAppBookmark[];
+  routers?: RouterConfig[];
 }
 
 /**
@@ -658,15 +673,24 @@ export interface RouterAdGuard {
   dns_responding: boolean;
 }
 
-/** Payload served by the router daemon at GET /api/telemetry. */
+export interface RouterApInfo {
+  upstream_ip: string;
+  upstream_reachable: boolean;
+  upstream_latency_ms: number | null;
+  bridge_dev: string;
+}
+
+/** Payload served by the router daemon or normalized from ubus RPC. */
 export interface RouterTelemetryPayload {
   timestamp: number;
   version: string;
+  role?: RouterRole;
   system: RouterSystem;
-  multi_wan: RouterMultiWan;
-  isp_bandwidth: RouterIspBandwidth[];
-  wifi: RouterWifi;
-  adguard: RouterAdGuard;
+  multi_wan?: RouterMultiWan;
+  isp_bandwidth?: RouterIspBandwidth[];
+  wifi?: RouterWifi;
+  adguard?: RouterAdGuard;
+  ap?: RouterApInfo;
 }
 
 /**
@@ -674,11 +698,27 @@ export interface RouterTelemetryPayload {
  * sample, `stale` from the last good fetch, `offline` when nothing is known.
  */
 export interface RouterTelemetry {
+  id?: string;
+  label?: string;
+  role?: RouterRole;
   status: 'live' | 'stale' | 'offline';
   endpoint: string;
   fetchedAt: number | null;
   error?: string;
   data: RouterTelemetryPayload | null;
+}
+
+export interface RouterFleetSummary {
+  total: number;
+  live: number;
+  stale: number;
+  offline: number;
+  totalClients: number;
+}
+
+export interface RouterFleet {
+  nodes: RouterTelemetry[];
+  summary: RouterFleetSummary;
 }
 
 export interface FullDashboardState {
@@ -698,6 +738,8 @@ export interface FullDashboardState {
   diskTrends?: DiskTrend[];
   /** OpenWrt router telemetry. Absent when the daemon has never answered. */
   router?: RouterTelemetry;
+  /** Fleet of OpenWrt routers. Absent when no routers are configured or reachable. */
+  routers?: RouterFleet;
   config: UserConfigStore;
   history: HistoryPoint[];
   sources: DataSources;

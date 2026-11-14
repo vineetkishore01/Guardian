@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { UserConfigStore, DashboardSettings, CustomAppBookmark } from './types.js';
+import { UserConfigStore, DashboardSettings, CustomAppBookmark, RouterConfig } from './types.js';
 import { logger } from './logger.js';
 
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -199,6 +199,7 @@ export function loadUserConfig(): UserConfigStore {
         settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
         containers: parsed.containers || {},
         customApps: parsed.customApps || DEFAULT_CUSTOM_APPS,
+        routers: parsed.routers || [],
       };
       return cachedConfig!;
     }
@@ -210,6 +211,7 @@ export function loadUserConfig(): UserConfigStore {
     settings: DEFAULT_SETTINGS,
     containers: {},
     customApps: DEFAULT_CUSTOM_APPS,
+    routers: [],
   };
 
   saveUserConfig(cachedConfig);
@@ -272,6 +274,30 @@ export function updateSettings(settings: Partial<DashboardSettings>): UserConfig
   const config = loadUserConfig();
   config.settings = { ...config.settings, ...settings };
   saveUserConfig(config);
+  return config;
+}
+
+export function addOrUpdateRouterConfig(router: RouterConfig): UserConfigStore {
+  const config = loadUserConfig();
+  if (!config.routers) {
+    config.routers = [];
+  }
+  const idx = config.routers.findIndex((r) => r.id === router.id);
+  if (idx >= 0) {
+    config.routers[idx] = router;
+  } else {
+    config.routers.push(router);
+  }
+  saveUserConfig(config);
+  return config;
+}
+
+export function deleteRouterConfig(id: string): UserConfigStore {
+  const config = loadUserConfig();
+  if (config.routers) {
+    config.routers = config.routers.filter((r) => r.id !== id);
+    saveUserConfig(config);
+  }
   return config;
 }
 
@@ -391,6 +417,35 @@ export function sanitizeSettings(body: unknown): Partial<DashboardSettings> | nu
       ? Math.min(1440, Math.max(1, Math.round(Number(b.alertCooldownMinutes))))
       : undefined,
   });
+}
+
+export function sanitizeRouterConfig(body: unknown): RouterConfig | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+
+  const id = cleanString(b.id, 64);
+  const label = cleanString(b.label, 128);
+  const host = cleanString(b.host, 255);
+  const username = cleanString(b.username, 64) || 'root';
+  const role = b.role === 'ap' ? 'ap' : 'gateway';
+  const enabled = typeof b.enabled === 'boolean' ? b.enabled : true;
+  const port = Number.isInteger(b.port) && Number(b.port) > 0 && Number(b.port) <= 65535 ? Number(b.port) : 80;
+  const ssl = Boolean(b.ssl);
+
+  if (!id || !label || !host) {
+    return null;
+  }
+
+  return {
+    id,
+    label,
+    host,
+    port,
+    ssl,
+    username,
+    role,
+    enabled,
+  };
 }
 
 export function getDefaultIconPreset(name: string): { icon: string; category: string; displayName?: string } | null {
