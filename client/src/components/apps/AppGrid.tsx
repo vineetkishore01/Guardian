@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, LayoutGrid, Plus, X, AlertTriangle, Check } from 'lucide-react';
+import { Search, LayoutGrid, List, Plus, X, AlertTriangle } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
 import { Input, Select } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { AppCard } from './AppCard';
 import { EditAppModal } from './EditAppModal';
+import { FleetTable, FleetSortKey } from '../fleet/FleetTable';
 import { ContainerItem, CustomAppBookmark, DashboardSettings } from '../../types/dashboard';
 import { containerSeverity, severityRank, cn } from '../../lib/utils';
 
@@ -22,7 +23,18 @@ interface AppGridProps {
   onUpdateContainer?: (container: ContainerItem) => Promise<boolean | void>;
 }
 
-type SortKey = 'default' | 'name' | 'cpu' | 'mem';
+type SortKey = FleetSortKey;
+type AppsView = 'table' | 'cards';
+
+const VIEW_KEY = 'guardian_apps_view';
+
+function readView(): AppsView {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === 'cards' ? 'cards' : 'table';
+  } catch {
+    return 'table';
+  }
+}
 
 /** Containers needing attention, for the summary line and the default order. */
 function needsAttention(item: ContainerItem | CustomAppBookmark, isBookmark: boolean): boolean {
@@ -56,6 +68,15 @@ export function AppGrid({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<SortKey>('default');
+  const [view, setViewState] = useState<AppsView>(readView);
+  const setView = (next: AppsView) => {
+    setViewState(next);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // storage unavailable (private mode); the choice just won't persist
+    }
+  };
   const [editingItem, setEditingItem] = useState<{
     item: ContainerItem | CustomAppBookmark;
     isCustomBookmark: boolean;
@@ -171,6 +192,10 @@ export function AppGrid({
               ((b.item as ContainerItem).memoryBytes || 0) -
               ((a.item as ContainerItem).memoryBytes || 0)
             );
+          case 'net': {
+            const flow = (i: ContainerItem) => (i.networkRxBytesPerSec || 0) + (i.networkTxBytesPerSec || 0);
+            return flow(b.item as ContainerItem) - flow(a.item as ContainerItem);
+          }
           default:
             return (a.item.name || '').localeCompare(b.item.name || '');
         }
@@ -228,27 +253,43 @@ export function AppGrid({
             <option value="name">Name (A–Z)</option>
             <option value="cpu">CPU usage</option>
             <option value="mem">Memory usage</option>
+            <option value="net">Network I/O</option>
           </Select>
+
+          <div role="group" aria-label="Applications layout" className="flex items-center rounded-md border border-border p-0.5">
+            {([
+              ['table', List, 'Table'],
+              ['cards', LayoutGrid, 'Cards'],
+            ] as const).map(([id, Icon, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setView(id)}
+                aria-pressed={view === id}
+                aria-label={`${label} view`}
+                title={`${label} view`}
+                className={cn(
+                  'rounded p-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  view === id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {!loading && containers.length > 0 && (
-        attentionCount > 0 ? (
-          <button
-            type="button"
-            onClick={() => setSelectedCategory('needs-attention')}
-            className="flex items-center gap-1.5 text-2xs text-warn hover:underline"
-          >
-            <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
-            {attentionCount} container{attentionCount === 1 ? '' : 's'} need
-            {attentionCount === 1 ? 's' : ''} attention — shown first
-          </button>
-        ) : (
-          <p className="flex items-center gap-1.5 text-2xs text-muted-foreground" role="status">
-            <Check className="h-3 w-3 shrink-0 text-ok" aria-hidden="true" />
-            All containers healthy
-          </p>
-        )
+      {!loading && attentionCount > 0 && selectedCategory !== 'needs-attention' && (
+        <button
+          type="button"
+          onClick={() => setSelectedCategory('needs-attention')}
+          className="flex items-center gap-1.5 text-2xs text-warn hover:underline"
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {attentionCount} container{attentionCount === 1 ? '' : 's'} need
+          {attentionCount === 1 ? 's' : ''} attention — shown first
+        </button>
       )}
 
       {loading ? (
@@ -266,6 +307,19 @@ export function AppGrid({
             </div>
           ))}
         </div>
+      ) : filteredItems.length > 0 && view === 'table' ? (
+        <FleetTable
+          entries={filteredItems}
+          settings={settings}
+          sortBy={sortBy}
+          onSort={setSortBy}
+          forceExpand={searchQuery.trim() !== ''}
+          onEdit={(item, isCustomBookmark) => setEditingItem({ item, isCustomBookmark })}
+          onDeleteBookmark={onDeleteBookmark}
+          onViewLogs={onViewLogs}
+          onRestartContainer={onRestartContainer}
+          onUpdateContainer={onUpdateContainer}
+        />
       ) : filteredItems.length > 0 ? (
         /*
          * Rows size to their own content rather than to the tallest card in the

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { AlertCircle, RefreshCw, Info } from 'lucide-react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { Header } from './components/layout/Header';
 import { SectionNav } from './components/layout/SectionNav';
-import { PruneAdvisorBanner } from './components/layout/PruneAdvisorBanner';
-import { ProblemsStrip } from './components/layout/ProblemsStrip';
+import { PulseStrip } from './components/glance/PulseStrip';
+import { HeroKpis } from './components/glance/HeroKpis';
 import { ReclaimPanel } from './components/storage/ReclaimPanel';
 import { DiskSmartSection } from './components/storage/DiskSmartSection';
 import { HostStatsBar } from './components/metrics/HostStatsBar';
@@ -22,7 +22,8 @@ import { MetricDetailPage } from './pages/MetricDetailPage';
 import { useLiveTelemetry } from './hooks/useLiveTelemetry';
 import { useRoute } from './lib/router';
 import { Button } from './components/ui/Button';
-import { formatAgo, formatBytes } from './lib/utils';
+import { formatBytes } from './lib/utils';
+import { buildVerdict } from './lib/glance';
 import { ContainerItem, MetricKey } from './types/dashboard';
 
 /** Quiet section heading. The data below it should be the loudest thing. */
@@ -40,6 +41,7 @@ export function App() {
     data,
     loading,
     connected,
+    lastSyncAt,
     error,
     refetch,
     updateContainer,
@@ -137,13 +139,29 @@ export function App() {
     [data?.probes]
   );
 
+  const verdict = useMemo(
+    () =>
+      buildVerdict({
+        host: data?.host,
+        containers: data?.containers,
+        disks,
+        problems: data?.problems,
+        dockerDf: data?.dockerDf,
+        syntheticSources,
+      }),
+    [data?.host, data?.containers, disks, data?.problems, data?.dockerDf, syntheticSources]
+  );
+
+  const scrollToFleet = () =>
+    document.getElementById('apps')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   return (
     <div className="flex min-h-screen flex-col">
       <Header
         host={data?.host}
         settings={data?.config?.settings}
-        dockerDf={data?.dockerDf}
         connected={connected}
+        lastSyncAt={lastSyncAt}
         isDark={isDark}
         onToggleTheme={() => setIsDark((v) => !v)}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -188,54 +206,49 @@ export function App() {
           </div>
         )}
 
-        {syntheticSources.length > 0 && (
-          <div className="flex items-start gap-2 rounded-lg border border-warn/25 bg-warn-soft/60 px-3.5 py-2.5 text-xs">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
-            <p className="text-foreground">
-              Showing sample {syntheticSources.join(' and ')} data — Guardian could not reach the
-              real source.{' '}
-              <span className="text-muted-foreground">
-                {syntheticSources.includes('Docker')
-                  ? 'Mount /var/run/docker.sock to read live containers. '
-                  : ''}
-                {syntheticSources.includes('host')
-                  ? 'Host metrics need /proc and /sys from a Linux host.'
-                  : ''}
-              </span>
-            </p>
-          </div>
-        )}
-
-        {/* Above everything else: the answer to "is anything wrong?" should not
-            require scrolling to the section that happens to be coloured. */}
-        <div id="overview" className="scroll-mt-28 space-y-3.5">
-          <ProblemsStrip problems={data?.problems} />
-
-          <PruneAdvisorBanner dockerDf={data?.dockerDf} onPrune={pruneDocker} />
+        {/* GLANCE: one sentence of verdict, then four numbers. Chips replace the old
+            stack of banners; details open in place rather than pushing the page. */}
+        <div id="overview" className="scroll-mt-28 space-y-3">
+          <PulseStrip
+            verdict={verdict}
+            problems={data?.problems}
+            host={data?.host}
+            dockerDf={data?.dockerDf}
+            syntheticSources={syntheticSources}
+            onPrune={pruneDocker}
+          />
+          <HeroKpis
+            host={data?.host}
+            history={data?.history}
+            containers={data?.containers}
+            disks={disks}
+            onOpenMetric={openMetric}
+            onOpenFleet={scrollToFleet}
+          />
         </div>
 
         <section id="system" aria-labelledby="system-heading" className="scroll-mt-28">
           <SectionHeading
             title="System"
             aside={
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setProcessesOpen({ open: true, sort: 'cpu' })}
-                  className="text-2xs font-medium text-brand hover:underline"
-                >
-                  View processes
-                </button>
-                {data?.host?.timestamp ? (
-                  <span title={new Date(data.host.timestamp).toLocaleString()}>
-                    updated {formatAgo(data.host.timestamp)}
-                  </span>
-                ) : null}
-              </div>
+              <button
+                type="button"
+                onClick={() => setProcessesOpen({ open: true, sort: 'cpu' })}
+                className="text-2xs font-medium text-brand hover:underline"
+              >
+                View processes
+              </button>
             }
           />
-          <HostStatsBar host={data?.host} history={data?.history} onOpenMetric={openMetric} />
-          <SystemHealthStrip host={data?.host} onOpenMetric={openMetric} />
+          <HostStatsBar
+            host={data?.host}
+            history={data?.history}
+            onOpenMetric={openMetric}
+            show={['temperature', 'network']}
+          />
+          <div className="mt-3">
+            <SystemHealthStrip host={data?.host} onOpenMetric={openMetric} />
+          </div>
         </section>
 
         <section id="storage" aria-labelledby="storage-heading" className="scroll-mt-28 space-y-3.5">
@@ -292,7 +305,7 @@ export function App() {
 
         <section id="apps" aria-labelledby="apps-heading" className="scroll-mt-28">
           <SectionHeading
-            title="Applications"
+            title="Container Fleet"
             aside={
               <span>
                 {containerSummary.running} running

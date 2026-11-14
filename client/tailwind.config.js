@@ -72,6 +72,9 @@ export default {
           DEFAULT: 'hsl(var(--crit))',
           soft: 'hsl(var(--crit-soft))',
         },
+
+        // Active I/O only (network / disk throughput that is non-zero right now).
+        io: 'hsl(var(--io))',
       },
       borderRadius: {
         xl: 'calc(var(--radius) + 4px)',

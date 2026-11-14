@@ -38,6 +38,9 @@ services:
       # --- Host Identification ---
       # Exposes true distribution name (Ubuntu, Debian, Fedora, Arch, Alpine, etc.) and hostname
       - /etc/os-release:/host/etc/os-release:ro
+      # Optional: lets Guardian flag a pending reboot (Debian/Ubuntu/Proxmox/Raspberry Pi OS
+      # create /var/run/reboot-required after kernel upgrades). Read-only; skip if unwanted.
+      # - /var/run:/host/var/run:ro
       - /etc/hostname:/host/etc/hostname:ro
 
       # --- Storage Monitoring ---

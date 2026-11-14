@@ -200,7 +200,50 @@ function parseProcMeminfo(): MemoryInfo {
     swapTotalBytes: swapTotal,
     swapUsedBytes: swapUsed,
     swapPercent,
+    // Absent keys stay undefined rather than 0: very old kernels and some
+    // container runtimes omit them, and "0 B of app memory" would be a lie.
+    activeAnonBytes: map['Active(anon)'],
+    inactiveAnonBytes: map['Inactive(anon)'],
+    pageCacheBytes:
+      map['Cached'] !== undefined || map['Buffers'] !== undefined ? cached + buffers : undefined,
   };
+}
+
+/**
+ * Whether the distro is asking for a reboot.
+ *
+ * Debian/Ubuntu (and Proxmox, Raspberry Pi OS) drop `/var/run/reboot-required`
+ * after a kernel or libc upgrade, with the triggering packages listed in the
+ * `.pkgs` sibling. Other distros simply have no such file, which reads as "not
+ * required" -- the correct answer for a flag that only exists on evidence.
+ *
+ * Inside the container the host's /var/run is not visible unless mounted, so
+ * `HOST_VAR` (or /host/var) is searched before the local /var and /run.
+ */
+function parseRebootRequired(): { required: boolean; packages?: string[] } {
+  const roots = [
+    process.env.HOST_VAR ? path.join(process.env.HOST_VAR, 'run') : null,
+    '/host/var/run',
+    '/host/run',
+    '/var/run',
+    '/run',
+  ].filter((p): p is string => p !== null);
+
+  for (const root of roots) {
+    try {
+      if (!fs.existsSync(path.join(root, 'reboot-required'))) continue;
+      const pkgs = safeReadFile(path.join(root, 'reboot-required.pkgs'))
+        ?.split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      // Unique, capped: a full kernel bump can list dozens of packages.
+      const unique = pkgs ? Array.from(new Set(pkgs)).slice(0, 12) : undefined;
+      return { required: true, packages: unique && unique.length > 0 ? unique : undefined };
+    } catch {
+      // Unreadable root; try the next candidate.
+    }
+  }
+  return { required: false };
 }
 
 /*
@@ -822,6 +865,7 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
   const thermals = parseThermals();
   const fans = parseFans();
   const network = parseNetwork();
+  const reboot = parseRebootRequired();
 
   const cpus = os.cpus();
   const cpuModel = cpus.length > 0 ? cpus[0].model : 'Unknown CPU';
@@ -853,6 +897,8 @@ export function collectHostTelemetry(): Omit<HostTelemetry, 'disks'> {
     battery: parseBattery(),
     diskIo: parseDiskIo(),
     pressure: parsePressure(),
+    rebootRequired: reboot.required,
+    rebootRequiredPackages: reboot.packages,
     network,
     timestamp: Date.now(),
   };

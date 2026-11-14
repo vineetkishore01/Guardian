@@ -1,15 +1,16 @@
-import React from 'react';
-import { Shield, Settings, Plus, Trash2, Sun, Moon, Activity } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Shield, Settings, Plus, Sun, Moon, Activity } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { PowerMenu } from './PowerMenu';
-import { HostTelemetry, DashboardSettings, DockerSystemDf } from '../../types/dashboard';
-import { cn, formatBytes } from '../../lib/utils';
+import { HostTelemetry, DashboardSettings } from '../../types/dashboard';
+import { cn, formatAgo } from '../../lib/utils';
 
 interface HeaderProps {
   host?: HostTelemetry;
   settings?: DashboardSettings;
-  dockerDf?: DockerSystemDf | null;
   connected: boolean;
+  /** Browser time of the last telemetry frame applied; null before the first. */
+  lastSyncAt?: number | null;
   isDark: boolean;
   onToggleTheme: () => void;
   onOpenSettings: () => void;
@@ -18,13 +19,66 @@ interface HeaderProps {
   onChangeHostMode: (mode: DashboardSettings['defaultHostMode']) => void;
 }
 
-const RECLAIM_THRESHOLD = 512 * 1024 * 1024; // 512 MB of dangling layers
+/** Telemetry is sampled every few seconds; this long without a frame is a stall, not jitter. */
+const STALE_AFTER_MS = 30_000;
+
+/**
+ * Freshness heartbeat: is the number I am looking at current?
+ *
+ * "Live" is only claimed while frames are actually arriving. A stream that is
+ * technically open but silent turns amber and keeps counting, rather than
+ * continuing to say "Live" over data that stopped moving.
+ */
+function SyncBadge({ connected, lastSyncAt }: { connected: boolean; lastSyncAt?: number | null }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const age = lastSyncAt ? Date.now() - lastSyncAt : null;
+  const stale = age !== null && age > STALE_AFTER_MS;
+  const healthy = connected && !stale;
+
+  const state = lastSyncAt === null || lastSyncAt === undefined
+    ? 'Connecting'
+    : !connected
+    ? 'Reconnecting'
+    : stale
+    ? 'Stale'
+    : 'Live';
+
+  return (
+    <span
+      className="flex items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-2 py-1 text-2xs text-muted-foreground"
+      title={
+        lastSyncAt
+          ? `Last telemetry frame received ${new Date(lastSyncAt).toLocaleTimeString()}`
+          : 'Waiting for the first telemetry frame'
+      }
+    >
+      <span
+        className={cn(
+          'h-1.5 w-1.5 shrink-0 rounded-full',
+          healthy ? 'bg-ok' : lastSyncAt ? 'bg-warn' : 'bg-muted-foreground'
+        )}
+        aria-hidden="true"
+      />
+      <span className={cn('font-medium', healthy ? 'text-foreground' : 'text-warn')}>{state}</span>
+      {lastSyncAt ? (
+        <span className="hidden font-mono tabular-nums sm:inline">
+          · synced {formatAgo(lastSyncAt)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 export function Header({
   host,
   settings,
-  dockerDf,
   connected,
+  lastSyncAt,
   isDark,
   onToggleTheme,
   onOpenSettings,
@@ -61,10 +115,6 @@ export function Header({
       : []),
   ];
 
-  // Mirrors the banner: only advertise space the prune button can actually free.
-  const reclaimable = dockerDf?.danglingBytes ?? 0;
-  const showReclaim = reclaimable > RECLAIM_THRESHOLD;
-
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur-xl">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
@@ -76,24 +126,6 @@ export function Header({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-semibold tracking-tight text-foreground">Guardian</h1>
-              {/* One connection indicator, not two competing ones. */}
-              <span
-                className="flex items-center gap-1.5 text-2xs text-muted-foreground"
-                title={connected ? 'Live telemetry stream connected' : 'Reconnecting to telemetry stream'}
-              >
-                <span className="relative flex h-1.5 w-1.5">
-                  {connected && (
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ok opacity-60" />
-                  )}
-                  <span
-                    className={cn(
-                      'relative inline-flex h-1.5 w-1.5 rounded-full',
-                      connected ? 'bg-ok' : 'bg-warn'
-                    )}
-                  />
-                </span>
-                <span className="hidden sm:inline">{connected ? 'Live' : 'Reconnecting'}</span>
-              </span>
             </div>
 
             <p className="truncate text-2xs text-muted-foreground">
@@ -118,6 +150,8 @@ export function Header({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <SyncBadge connected={connected} lastSyncAt={lastSyncAt} />
+
           {hostModes.length > 1 && (
             <div
               role="group"
@@ -143,17 +177,6 @@ export function Header({
                 </button>
               ))}
             </div>
-          )}
-
-          {showReclaim && (
-            <a
-              href="#docker-cleanup"
-              className="hidden items-center gap-1.5 rounded-md border border-warn/25 bg-warn-soft px-2 py-1 text-2xs font-medium text-warn transition-colors hover:border-warn/40 md:flex"
-              title="Reclaimable Docker storage — jump to cleanup"
-            >
-              <Trash2 className="h-3 w-3" aria-hidden="true" />
-              {formatBytes(reclaimable)}
-            </a>
           )}
 
           <Button variant="secondary" size="sm" onClick={onOpenAddApp}>

@@ -54,6 +54,8 @@
     --warn-soft: 38 92% 95%;
     --crit: 351 74% 47%;
     --crit-soft: 0 86% 96%;
+    /* Cyan is reserved for live I/O: bytes actually moving right now. */
+    --io: 192 82% 34%;
 
     /* Elevation: a hairline top highlight plus a soft ambient shadow is what
        separates a crafted surface from a plain 1px box. */
@@ -131,6 +133,7 @@
     --warn-soft: 36 55% 10%;
     --crit: 351 83% 63%;
     --crit-soft: 351 55% 11%;
+    --io: 189 78% 55%;
 
     --surface-highlight: 0 0% 100%;
     --surface-shadow: 0 0% 0%;

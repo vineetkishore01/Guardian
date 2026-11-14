@@ -23,6 +23,12 @@ export interface MemoryInfo {
   /** Swap traffic from /proc/vmstat. Sustained non-zero both ways is thrashing. */
   swapInBytesPerSec?: number;
   swapOutBytesPerSec?: number;
+  /** Active(anon) from /proc/meminfo: recently-touched application pages. */
+  activeAnonBytes?: number;
+  /** Inactive(anon): application pages not touched recently. */
+  inactiveAnonBytes?: number;
+  /** Cached + Buffers: reclaimable file cache. */
+  pageCacheBytes?: number;
 }
 
 /** Linux pressure-stall information from /proc/pressure/{cpu,io,memory}. */
@@ -374,6 +380,9 @@ export interface HostTelemetry {
   throttle?: CpuThrottle;
   battery?: BatteryTelemetry;
   diskIo?: DiskIo[];
+  /** Distro flagged a pending reboot (`/var/run/reboot-required`). */
+  rebootRequired?: boolean;
+  rebootRequiredPackages?: string[];
   timestamp: number;
 }
 

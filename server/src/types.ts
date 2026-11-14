@@ -28,6 +28,17 @@ export interface MemoryInfo {
    */
   swapInBytesPerSec?: number;
   swapOutBytesPerSec?: number;
+  /*
+   * Where the RAM actually went, from /proc/meminfo. "Used" alone cannot tell a
+   * host full of reclaimable page cache from one full of application memory:
+   * the first is healthy, the second is about to swap.
+   */
+  /** Active(anon): recently-touched anonymous (application) pages. */
+  activeAnonBytes?: number;
+  /** Inactive(anon): anonymous pages not touched recently; still application memory. */
+  inactiveAnonBytes?: number;
+  /** Cached + Buffers: reclaimable file cache the kernel gives back on demand. */
+  pageCacheBytes?: number;
 }
 
 /**
@@ -419,6 +430,14 @@ export interface HostTelemetry {
   gpu?: GpuTelemetry[];
   wan?: WanTelemetry;
   pressure?: PressureInfo;
+  /**
+   * True when the distro has flagged a pending reboot (kernel/libc update) via
+   * `/var/run/reboot-required`. Only ever true on evidence: from inside a
+   * container that cannot see the host's /var/run this stays false.
+   */
+  rebootRequired?: boolean;
+  /** Packages that asked for the reboot, from `reboot-required.pkgs` when present. */
+  rebootRequiredPackages?: string[];
   network: NetworkInterface[];
   timestamp: number;
 }

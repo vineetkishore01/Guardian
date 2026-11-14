@@ -11,7 +11,15 @@ interface HostStatsBarProps {
   history?: HistoryPoint[];
   /** Opens the long-term history view for a metric. */
   onOpenMetric?: (metric: MetricKey) => void;
+  /**
+   * Which cards to render. The Glance tier already shows CPU and memory as hero
+   * KPIs, so the System section asks only for the two it does not cover.
+   */
+  show?: CardKey[];
 }
+
+export type CardKey = 'cpu' | 'memory' | 'temperature' | 'network';
+const ALL_CARDS: CardKey[] = ['cpu', 'memory', 'temperature', 'network'];
 
 /*
  * Interfaces that are never the machine's primary link.
@@ -34,14 +42,16 @@ function pickPrimaryThermal(host: HostTelemetry) {
   );
 }
 
-export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarProps) {
+export function HostStatsBar({ host, history = [], onOpenMetric, show = ALL_CARDS }: HostStatsBarProps) {
+  const want = (k: CardKey) => show.includes(k);
+  const gridCols = show.length >= 4 ? 'xl:grid-cols-4' : show.length === 3 ? 'xl:grid-cols-3' : '';
   const open = (metric: MetricKey) => (onOpenMetric ? () => onOpenMetric(metric) : undefined);
 
   if (!host) {
     return (
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <MetricCardSkeleton key={i} />
+      <div className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2', gridCols)}>
+        {show.map((k) => (
+          <MetricCardSkeleton key={k} />
         ))}
       </div>
     );
@@ -76,7 +86,8 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className={cn('grid grid-cols-1 gap-3 sm:grid-cols-2', gridCols)}>
+        {want('cpu') && (
         <MetricCard
           label="CPU"
           onOpen={open('cpu')}
@@ -121,7 +132,9 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
             </>
           }
         />
+        )}
 
+        {want('memory') && (
         <MetricCard
           label="Memory"
           onOpen={open('ram')}
@@ -156,7 +169,9 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
             </>
           }
         />
+        )}
 
+        {want('temperature') && (
         <MetricCard
           label="Temperature"
           onOpen={thermal ? open('temp') : undefined}
@@ -187,7 +202,9 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
             )
           }
         />
+        )}
 
+        {want('network') && (
         <MetricCard
           label="Network"
           onOpen={primaryNet ? open('netRx') : undefined}
@@ -212,6 +229,7 @@ export function HostStatsBar({ host, history = [], onOpenMetric }: HostStatsBarP
             )
           }
         />
+        )}
       </div>
 
       {/* GPU Cards (if present) */}

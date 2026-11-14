@@ -25,6 +25,9 @@ export function useLiveTelemetry() {
   const [loading, setLoading] = useState<boolean>(true);
   const [connected, setConnected] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  /** Browser clock time of the last frame applied. Client-side on purpose: the
+   *  server's timestamp would make "synced 3s ago" wrong whenever the two clocks drift. */
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
 
   const connectedRef = useRef<boolean>(false);
   connectedRef.current = connected;
@@ -36,6 +39,7 @@ export function useLiveTelemetry() {
     if (receivedAt < lastAppliedAt.current) return;
     lastAppliedAt.current = receivedAt;
     setData(payload);
+    setLastSyncAt(Date.now());
     setLoading(false);
   }, []);
 
@@ -263,6 +267,7 @@ export function useLiveTelemetry() {
     data,
     loading,
     connected,
+    lastSyncAt,
     error,
     speedtestHistory,
     refetch: fetchStatus,
